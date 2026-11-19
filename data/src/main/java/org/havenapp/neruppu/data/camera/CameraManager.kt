@@ -66,6 +66,23 @@ class CameraManager(private val context: Context) {
         private set
 
     private var currentVideoEnabled: Boolean? = null
+
+    /** Photo resolution preset: "hd" (1280x720), "fhd" (1920x1080), "max" (highest the sensor offers). */
+    var photoResolution: String = "fhd"
+
+    /** Video quality preset: "sd" (480p), "hd" (720p), "fhd" (1080p). */
+    var videoQuality: String = "fhd"
+
+    private var currentPhotoResolution: String? = null
+    private var currentVideoQuality: String? = null
+
+    /** Resolution actually chosen by CameraX for photos, e.g. "1920x1080" (null if not bound). */
+    val actualPhotoResolution: String?
+        get() = imageCapture?.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" }
+
+    /** Resolution actually chosen by CameraX for video clips (null if video is not bound). */
+    val actualVideoResolution: String?
+        get() = videoCapture?.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" }
     private var motionAnalyzer: MotionAnalyzer? = null
      
     private val mutex = Mutex()
@@ -174,7 +191,8 @@ class CameraManager(private val context: Context) {
         onMotionDetected: (Double) -> Unit
     ) {
         if (isBound && currentCameraSide == useFrontCamera && currentLifecycleOwner == lifecycleOwner &&
-            currentVideoEnabled == enableVideo) {
+            currentVideoEnabled == enableVideo && currentPhotoResolution == photoResolution &&
+            currentVideoQuality == videoQuality) {
             Log.d("CameraManager", "Camera already bound to service lifecycle. Keeping active.")
             return
         }
@@ -192,14 +210,17 @@ class CameraManager(private val context: Context) {
                 
                 val useCases = mutableListOf<androidx.camera.core.UseCase>()
 
+                val photoStrategy = when (photoResolution) {
+                    "max" -> ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY
+                    "hd" -> ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    else -> ResolutionStrategy(Size(1920, 1080), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                }
                 val resolutionSelector = ResolutionSelector.Builder()
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            Size(1920, 1080),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
-                        )
+                    .setResolutionStrategy(photoStrategy)
+                    .setAspectRatioStrategy(
+                        if (photoResolution == "max") AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+                        else AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
                     )
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
                     .build()
                 
                 val analysisResolutionSelector = ResolutionSelector.Builder()
@@ -242,10 +263,14 @@ class CameraManager(private val context: Context) {
                 if (wantVideo) {
                     val recorder = Recorder.Builder()
                         .setQualitySelector(
-                            QualitySelector.from(
-                                Quality.FHD,
-                                FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
-                            )
+                            run {
+                                val q = when (videoQuality) {
+                                    "sd" -> Quality.SD
+                                    "hd" -> Quality.HD
+                                    else -> Quality.FHD
+                                }
+                                QualitySelector.from(q, FallbackStrategy.lowerQualityOrHigherThan(q))
+                            }
                         )
                         .build()
                     videoCapture = VideoCapture.withOutput(recorder)
@@ -274,6 +299,8 @@ class CameraManager(private val context: Context) {
                     )
                 }
                 currentVideoEnabled = enableVideo
+                currentPhotoResolution = photoResolution
+                currentVideoQuality = videoQuality
                 
                 isBound = true
                 currentCameraSide = useFrontCamera
@@ -296,6 +323,8 @@ class CameraManager(private val context: Context) {
             imageCapture = null
             videoCapture = null
             currentVideoEnabled = null
+            currentPhotoResolution = null
+            currentVideoQuality = null
             imageAnalysis?.clearAnalyzer()
             imageAnalysis = null
             motionAnalyzer?.cleanup()
