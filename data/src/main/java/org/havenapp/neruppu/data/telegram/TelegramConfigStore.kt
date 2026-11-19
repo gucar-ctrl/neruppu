@@ -47,11 +47,20 @@ class TelegramConfigStore @Inject constructor(
 
     override var botToken: String
         get() = prefs.getString(KEY_BOT_TOKEN, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_BOT_TOKEN, value).apply()
+        set(value) = prefs.edit().putString(KEY_BOT_TOKEN, sanitizeToken(value)).apply()
 
     override var chatId: String
         get() = prefs.getString(KEY_CHAT_ID, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_CHAT_ID, value).apply()
+        set(value) = prefs.edit().putString(KEY_CHAT_ID, value.filterNot { it.isWhitespace() }).apply()
+
+    /**
+     * Removes whitespace/newlines and extracts the bare token if the user pasted
+     * something like "bot123:ABC" or a full https://api.telegram.org/bot123:ABC/getMe URL.
+     */
+    private fun sanitizeToken(raw: String): String {
+        val compact = raw.filterNot { it.isWhitespace() }
+        return TOKEN_REGEX.find(compact)?.value ?: compact
+    }
 
     override val isComplete: Boolean
         get() {
@@ -73,5 +82,6 @@ class TelegramConfigStore @Inject constructor(
     companion object {
         private const val KEY_BOT_TOKEN = "bot_token"
         private const val KEY_CHAT_ID = "chat_id"
+        private val TOKEN_REGEX = Regex("""\d{5,}:[A-Za-z0-9_-]{30,}""")
     }
 }
