@@ -93,13 +93,22 @@ fun IntegrationConfigPopup(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 fields.forEach { field ->
+                    // Show/hide toggle for secret fields, so pasted tokens can be checked visually.
+                    var revealed by remember(field.label) { mutableStateOf(false) }
                     OutlinedTextField(
                         value = field.value,
                         onValueChange = field.onValueChange,
                         label = { Text(field.label, color = TextSecondary) },
                         placeholder = { Text(field.placeholder) },
                         singleLine = true,
-                        visualTransformation = if (field.isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+                        visualTransformation = if (field.isPassword && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
+                        trailingIcon = if (field.isPassword) {
+                            {
+                                TextButton(onClick = { revealed = !revealed }) {
+                                    Text(if (revealed) "Hide" else "Show", color = NeruppuOrange)
+                                }
+                            }
+                        } else null,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
