@@ -624,6 +624,8 @@ fun TelegramExtrasSection() {
     val prefs = remember { context.getSharedPreferences("neruppu_prefs", android.content.Context.MODE_PRIVATE) }
     var clipMode by remember { mutableStateOf(prefs.getString("clip_mode", "photo") ?: "photo") }
     var remote by remember { mutableStateOf(prefs.getBoolean("remote_control", false)) }
+    var photoRes by remember { mutableStateOf(prefs.getString("photo_resolution", "fhd") ?: "fhd") }
+    var videoQ by remember { mutableStateOf(prefs.getString("video_quality", "fhd") ?: "fhd") }
 
     val options = listOf(
         "photo" to "Solo foto",
@@ -669,6 +671,42 @@ fun TelegramExtrasSection() {
             color = TextSecondary,
             style = MaterialTheme.typography.bodySmall
         )
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Risoluzione foto", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        PrefRadioGroup(
+            options = listOf(
+                "hd" to "HD 1280x720 (leggera, piu veloce)",
+                "fhd" to "Full HD 1920x1080",
+                "max" to "Massima del sensore (file grandi, piu lenta)"
+            ),
+            selected = photoRes,
+            onSelect = {
+                photoRes = it
+                prefs.edit().putString("photo_resolution", it).apply()
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Qualita video", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        PrefRadioGroup(
+            options = listOf(
+                "sd" to "SD 480p (file piccoli, invio rapido)",
+                "hd" to "HD 720p",
+                "fhd" to "Full HD 1080p"
+            ),
+            selected = videoQ,
+            onSelect = {
+                videoQ = it
+                prefs.edit().putString("video_quality", it).apply()
+            }
+        )
+        Text(
+            "Se il telefono non supporta la risoluzione scelta usa la piu vicina disponibile. " +
+                "Quella effettiva si vede con il comando /stato.",
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
     }
     Spacer(modifier = Modifier.height(6.dp))
     SettingRow(
@@ -681,6 +719,25 @@ fun TelegramExtrasSection() {
             prefs.edit().putBoolean("remote_control", it).apply()
         }
     )
+}
+
+@Composable
+fun PrefRadioGroup(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+    options.forEach { (key, label) ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(key) },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected == key,
+                onClick = { onSelect(key) },
+                colors = RadioButtonDefaults.colors(selectedColor = NeruppuOrange)
+            )
+            Text(label, color = TextPrimary, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 @Composable
