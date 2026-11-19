@@ -62,8 +62,8 @@ class TelegramAlertTransport @Inject constructor(
                     val bytes: ByteArray = File(file.absolutePath).readBytes()
 
                     if (file.mimeType == "image/jpeg") {
-                        val uploadBytes = if (bytes.size > 800_000) {
-                            compressJpeg(bytes, targetKb = 800)
+                        val uploadBytes = if (bytes.size > 1_500_000) {
+                            compressJpeg(bytes, targetKb = 1500)
                         } else bytes
                         apiClient.sendPhoto(uploadBytes, textMsg).getOrThrow()
                     } else {
@@ -85,9 +85,9 @@ class TelegramAlertTransport @Inject constructor(
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return bytes
         var scaled: Bitmap? = null
         return try {
-            scaled = if (bitmap.width > 1280) {
-                Bitmap.createScaledBitmap(bitmap, 1280,
-                    (1280f * bitmap.height / bitmap.width).toInt(), true)
+            scaled = if (bitmap.width > 1920) {
+                Bitmap.createScaledBitmap(bitmap, 1920,
+                    (1920f * bitmap.height / bitmap.width).toInt(), true)
             } else null
 
             val targetBitmap = scaled ?: bitmap
