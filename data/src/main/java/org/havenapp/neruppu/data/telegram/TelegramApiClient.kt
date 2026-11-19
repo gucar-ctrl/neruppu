@@ -27,6 +27,7 @@ import io.ktor.client.request.forms.formData
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
@@ -110,6 +111,77 @@ class TelegramApiClient @Inject constructor(
             setBody(MultiPartFormDataContent(formData))
         }
         if (response.status.value !in 200..299) error("Telegram sendVoice failed: ${response.status}")
+    }
+
+    suspend fun sendVideo(file: java.io.File, caption: String): Result<Unit> = runCatching {
+        val bytes = file.readBytes()
+        val response: HttpResponse = client.post("$baseUrl/sendVideo") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("caption", caption)
+                append("supports_streaming", "true")
+                append("video", bytes, Headers.build {
+                    append(HttpHeaders.ContentType, "video/mp4")
+                    append(HttpHeaders.ContentDisposition, "filename=\"clip.mp4\"")
+                })
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram sendVideo failed: ${response.status}")
+        }
+    }
+
+    /** Sends 2-10 JPEG photos as a single album. */
+    suspend fun sendMediaGroup(photos: List<ByteArray>, caption: String): Result<Unit> = runCatching {
+        require(photos.size in 2..10) { "sendMediaGroup needs 2-10 photos" }
+        val media = org.json.JSONArray()
+        photos.indices.forEach { i ->
+            val item = org.json.JSONObject()
+                .put("type", "photo")
+                .put("media", "attach://p$i")
+            if (i == 0) item.put("caption", caption)
+            media.put(item)
+        }
+        val response: HttpResponse = client.post("$baseUrl/sendMediaGroup") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("media", media.toString())
+                photos.forEachIndexed { i, bytes ->
+                    append("p$i", bytes, Headers.build {
+                        append(HttpHeaders.ContentType, "image/jpeg")
+                        append(HttpHeaders.ContentDisposition, "filename=\"p$i.jpg\"")
+                    })
+                }
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram sendMediaGroup failed: ${response.status}")
+        }
+    }
+
+    /** Sends plain text without HTML parsing (safe for arbitrary status strings). */
+    suspend fun sendPlainMessage(text: String): Result<Unit> = runCatching {
+        val response: HttpResponse = client.post("$baseUrl/sendMessage") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("text", text)
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram sendMessage failed: ${response.status}")
+        }
+    }
+
+    /** Long-polls for incoming bot updates and returns the raw JSON body. */
+    suspend fun getUpdates(offset: Long, timeoutSec: Int): Result<String> = runCatching {
+        val response: HttpResponse = client.get("$baseUrl/getUpdates?offset=$offset&timeout=$timeoutSec&allowed_updates=%5B%22message%22%5D")
+        if (response.status.value !in 200..299) {
+            error("Telegram getUpdates failed: ${response.status}")
+        }
+        response.bodyAsText()
     }
 
     suspend fun testConnection(): Result<Unit> = runCatching {
