@@ -46,6 +46,10 @@ import kotlinx.coroutines.flow.*
 import org.havenapp.neruppu.R
 import org.havenapp.neruppu.data.audio.AudioRecorder
 import org.havenapp.neruppu.data.camera.CameraManager
+import org.havenapp.neruppu.data.telegram.TelegramApiClient
+import org.havenapp.neruppu.data.telegram.TelegramConfigStore
+import org.json.JSONArray
+import org.json.JSONObject
 import org.havenapp.neruppu.data.sensors.*
 import org.havenapp.neruppu.domain.model.Event
 import org.havenapp.neruppu.domain.model.SensorType
@@ -58,6 +62,7 @@ import org.havenapp.neruppu.domain.usecase.HandleSensorEventUseCase
 import org.havenapp.neruppu.domain.usecase.AttachAudioToEventUseCase
 import org.havenapp.neruppu.worker.EventNotificationWorker
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -82,6 +87,12 @@ class MonitoringService : LifecycleService() {
 
     @Inject
     lateinit var cameraManager: CameraManager
+
+    @Inject
+    lateinit var telegramApiClient: TelegramApiClient
+
+    @Inject
+    lateinit var telegramConfigStore: TelegramConfigStore
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var wakeLockRefreshJob: Job? = null
@@ -134,6 +145,15 @@ class MonitoringService : LifecycleService() {
                     updatePrefValues()
                     startMonitoring()
                 }
+                "clip_mode" -> {
+                    Log.d("MonitoringService", "Clip mode changed, re-binding camera...")
+                    updatePrefValues()
+                    if (_isMonitoring.value || _uiActive.value) startMonitoring()
+                }
+                "remote_control" -> {
+                    updatePrefValues()
+                    withContext(Dispatchers.Main) { updateRemoteControl() }
+                }
                 "audio_threshold", "save_photos" -> {
                     Log.d("MonitoringService", "Prefs changed ($key), updating values...")
                     updatePrefValues()
@@ -147,9 +167,13 @@ class MonitoringService : LifecycleService() {
     private var sensitivityPref = 15f
     private var useFrontCameraPref = false
     private var audioThresholdPref = 200f
+    private var clipModePref = CLIP_PHOTO
+    private var remoteControlPref = false
 
     private fun updatePrefValues() {
         val prefs = getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
+        clipModePref = prefs.getString("clip_mode", CLIP_PHOTO) ?: CLIP_PHOTO
+        remoteControlPref = prefs.getBoolean("remote_control", false)
         savePhotosPref = prefs.getBoolean("save_photos", true)
         sensitivityPref = prefs.getFloat("motion_sensitivity", 15f)
         useFrontCameraPref = prefs.getBoolean("use_front_camera", false)
@@ -196,6 +220,7 @@ class MonitoringService : LifecycleService() {
         startHeartbeat()
         // Sensors will be started based on isMonitoring or UI visibility
         startMonitoringIfNeeded()
+        updateRemoteControl()
     }
 
     private fun startHeartbeat() {
@@ -371,6 +396,7 @@ class MonitoringService : LifecycleService() {
         
 // Always bind camera if we are either Monitoring OR UI is active
         if (_isMonitoring.value || _uiActive.value) {
+            cameraManager.enableVideo = clipModePref == CLIP_VIDEO
             cameraManager.bindCamera(
                 lifecycleOwner = this,
                 useFrontCamera = useFrontCameraPref,
@@ -610,6 +636,20 @@ class MonitoringService : LifecycleService() {
                 }
             }
         }
+
+        if (type != SensorType.MICROPHONE && clipModePref != CLIP_PHOTO &&
+            alertTargetRepository.activeTarget == AlertTarget.TELEGRAM &&
+            isRecordingClip.compareAndSet(false, true)) {
+            serviceScope.launch {
+                try {
+                    sendFollowUpClip(type)
+                } catch (e: Exception) {
+                    Log.e("MonitoringService", "Follow-up clip failed", e)
+                } finally {
+                    isRecordingClip.set(false)
+                }
+            }
+        }
         
         // Schedule deferred notification via WorkManager (Best Practice)
         val workData = Data.Builder()
@@ -631,6 +671,180 @@ class MonitoringService : LifecycleService() {
         return id
     }
 
+    // ---------------------------------------------------------------------
+    // Follow-up media (10 s video or burst of photos) sent to Telegram
+    // ---------------------------------------------------------------------
+
+    private val isRecordingClip = AtomicBoolean(false)
+
+    private suspend fun sendFollowUpClip(type: SensorType) {
+        val label = when (type) {
+            SensorType.CAMERA_MOTION -> "movimento"
+            SensorType.ACCELEROMETER -> "vibrazione"
+            SensorType.LIGHT -> "cambio di luce"
+            else -> type.name
+        }
+        if (clipModePref == CLIP_VIDEO && cameraManager.canRecordVideo) {
+            val clip = cameraManager.recordClip(CLIP_DURATION_MS)
+            if (clip != null) {
+                telegramApiClient.sendVideo(clip, "\uD83C\uDFA5 Video 10 s dopo il rilevamento ($label)")
+                    .onFailure { Log.e("MonitoringService", "sendVideo failed", it) }
+                clip.delete()
+                return
+            }
+            Log.w("MonitoringService", "Video clip unavailable, falling back to photo burst")
+        }
+        sendPhotoBurst(label)
+    }
+
+    private suspend fun sendPhotoBurst(label: String) {
+        val photos = mutableListOf<ByteArray>()
+        repeat(BURST_EXTRA_PHOTOS) {
+            delay(CLIP_DURATION_MS / BURST_EXTRA_PHOTOS)
+            readAndDeleteCapture()?.let { photos.add(it) }
+        }
+        when {
+            photos.size >= 2 -> telegramApiClient.sendMediaGroup(photos, "\uD83D\uDCF8 Sequenza di 10 s dopo il rilevamento ($label)")
+            photos.size == 1 -> telegramApiClient.sendPhoto(photos[0], "\uD83D\uDCF8 Foto successiva ($label)")
+            else -> Result.success(Unit)
+        }.onFailure { Log.e("MonitoringService", "Photo burst send failed", it) }
+    }
+
+    private suspend fun readAndDeleteCapture(): ByteArray? = try {
+        val uri = cameraManager.capturePhoto()
+        withContext(Dispatchers.IO) {
+            uri?.path?.let { path ->
+                val f = File(path)
+                val bytes = if (f.exists()) f.readBytes() else null
+                f.delete()
+                bytes
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("MonitoringService", "Capture for Telegram failed", e)
+        null
+    }
+
+    // ---------------------------------------------------------------------
+    // Telegram remote control: /attiva /disattiva /stato /foto /aiuto
+    // ---------------------------------------------------------------------
+
+    private var remoteJob: Job? = null
+    private var remoteForegroundRequested = false
+
+    private fun updateRemoteControl() {
+        val shouldRun = remoteControlPref && telegramConfigStore.isComplete
+        if (shouldRun) {
+            if (!remoteForegroundRequested) {
+                remoteForegroundRequested = true
+                try {
+                    // Make this a started service so it survives when the UI unbinds.
+                    startForegroundService(Intent(this, MonitoringService::class.java))
+                } catch (e: Exception) {
+                    Log.w("MonitoringService", "Could not start service for remote control", e)
+                }
+            }
+            updateNotification()
+            if (remoteJob?.isActive != true) {
+                remoteJob = serviceScope.launch { pollTelegramCommands() }
+            }
+        } else {
+            remoteJob?.cancel()
+            remoteJob = null
+            remoteForegroundRequested = false
+            updateNotification()
+        }
+    }
+
+    private suspend fun pollTelegramCommands() {
+        Log.i("MonitoringService", "Telegram remote control started")
+        var offset = 0L
+        val ignoreBefore = System.currentTimeMillis() / 1000 - 10
+        while (currentCoroutineContext().isActive) {
+            val body = telegramApiClient.getUpdates(offset, 25).getOrElse {
+                Log.w("MonitoringService", "getUpdates failed: ${it.message}")
+                delay(15_000)
+                null
+            } ?: continue
+            try {
+                val updates = JSONObject(body).optJSONArray("result") ?: JSONArray()
+                for (i in 0 until updates.length()) {
+                    val update = updates.getJSONObject(i)
+                    offset = maxOf(offset, update.getLong("update_id") + 1)
+                    val msg = update.optJSONObject("message") ?: continue
+                    val chatId = msg.optJSONObject("chat")?.optLong("id") ?: continue
+                    // Only the configured chat may control the device; stale commands are ignored.
+                    if (chatId.toString() != telegramConfigStore.chatId.trim()) continue
+                    if (msg.optLong("date") < ignoreBefore) continue
+                    handleRemoteCommand(msg.optString("text"))
+                }
+            } catch (e: Exception) {
+                Log.w("MonitoringService", "Bad getUpdates payload", e)
+                delay(5_000)
+            }
+        }
+    }
+
+    private suspend fun handleRemoteCommand(rawText: String) {
+        val cmd = rawText.trim().lowercase(Locale.ROOT).substringBefore(' ').substringBefore('@')
+        Log.i("MonitoringService", "Remote command: $cmd")
+        when (cmd) {
+            "/attiva", "/arm" -> {
+                if (!_isMonitoring.value) withContext(Dispatchers.Main) { toggleMonitoring() }
+                reply("\u2705 Monitoraggio ATTIVO")
+            }
+            "/disattiva", "/disarm" -> {
+                if (_isMonitoring.value) withContext(Dispatchers.Main) { toggleMonitoring() }
+                reply("\u23F8\uFE0F Monitoraggio SPENTO")
+            }
+            "/stato", "/status" -> reply(statusText())
+            "/foto", "/photo" -> sendRemoteSnapshot()
+            else -> reply(HELP_TEXT)
+        }
+    }
+
+    private suspend fun reply(text: String) {
+        telegramApiClient.sendPlainMessage(text)
+            .onFailure { Log.w("MonitoringService", "Reply failed", it) }
+    }
+
+    private fun statusText(): String {
+        val bm = getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+        val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val charging = bm.isCharging
+        val mode = when (clipModePref) {
+            CLIP_VIDEO -> if (cameraManager.videoSupported) "foto + video 10 s" else "foto + sequenza (video non supportato)"
+            CLIP_BURST -> "foto + sequenza di foto"
+            else -> "solo foto"
+        }
+        return buildString {
+            appendLine(if (_isMonitoring.value) "\uD83D\uDFE2 Monitoraggio ATTIVO" else "\u26AA Monitoraggio SPENTO")
+            appendLine("Batteria: $level%" + if (charging) " (in carica)" else " (NON in carica)")
+            append("Invio dopo rilevamento: $mode")
+        }
+    }
+
+    private suspend fun sendRemoteSnapshot() {
+        val tempBind = !_isMonitoring.value && !_uiActive.value
+        if (tempBind) {
+            withContext(Dispatchers.Main) { setUiActive(true) }
+            delay(2_500) // let the camera start and settle exposure
+        }
+        try {
+            val bytes = readAndDeleteCapture()
+            if (bytes != null) {
+                telegramApiClient.sendPhoto(bytes, "\uD83D\uDCF7 Foto richiesta")
+                    .onFailure { Log.w("MonitoringService", "Snapshot send failed", it) }
+            } else {
+                reply("Non sono riuscito a scattare la foto.")
+            }
+        } finally {
+            if (tempBind) {
+                withContext(Dispatchers.Main) { setUiActive(false) }
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -643,7 +857,7 @@ class MonitoringService : LifecycleService() {
 
     private fun updateNotification() {
         val notification = createNotification()
-        if (_isMonitoring.value) {
+        if (_isMonitoring.value || (remoteControlPref && telegramConfigStore.isComplete)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
@@ -668,6 +882,8 @@ class MonitoringService : LifecycleService() {
 
         val contentText = if (_isMonitoring.value) {
             "System is active and monitoring sensors"
+        } else if (remoteControlPref) {
+            "Idle - waiting for Telegram commands"
         } else {
             "System is idle. Tap START to begin monitoring."
         }
@@ -688,6 +904,7 @@ class MonitoringService : LifecycleService() {
             .unregisterOnSharedPreferenceChangeListener(prefsListener)
         stopWakeLockIfNeeded()
         heartbeatJob?.cancel()
+        remoteJob?.cancel()
         sensorsJob?.cancel()
         uiSensorsJob?.cancel()
         serviceScope.cancel()
@@ -698,5 +915,15 @@ class MonitoringService : LifecycleService() {
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "monitoring_channel"
         const val ACTION_STOP_SERVICE = "org.havenapp.neruppu.STOP_SERVICE"
+        const val CLIP_PHOTO = "photo"
+        const val CLIP_VIDEO = "video"
+        const val CLIP_BURST = "burst"
+        const val CLIP_DURATION_MS = 10_000L
+        const val BURST_EXTRA_PHOTOS = 4
+        const val HELP_TEXT = "Comandi disponibili:\n" +
+            "/attiva - accende il monitoraggio\n" +
+            "/disattiva - spegne il monitoraggio\n" +
+            "/stato - stato e batteria\n" +
+            "/foto - scatta una foto adesso"
     }
 }
