@@ -47,6 +47,10 @@ import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -267,6 +271,9 @@ fun SettingsScreen(
                         onCheckedChange = onSavePhotosToggle
                     )
                 }
+
+                SectionTitle("Telegram: media e comandi")
+                TelegramExtrasSection()
 
                 SectionTitle("Log deletion")
                 DeletePasswordManagementRow(
@@ -609,6 +616,71 @@ fun IntegrationSettingRow(
             modifier = Modifier.size(20.dp)
         )
     }
+}
+
+@Composable
+fun TelegramExtrasSection() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("neruppu_prefs", android.content.Context.MODE_PRIVATE) }
+    var clipMode by remember { mutableStateOf(prefs.getString("clip_mode", "photo") ?: "photo") }
+    var remote by remember { mutableStateOf(prefs.getBoolean("remote_control", false)) }
+
+    val options = listOf(
+        "photo" to "Solo foto",
+        "video" to "Foto + video di 10 s (Full HD)",
+        "burst" to "Foto + sequenza di 4 foto in 10 s"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BackgroundSecondary, RoundedCornerShape(12.dp))
+            .border(0.5.dp, BorderTertiary, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Videocam, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Text("Dopo un rilevamento invia", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        }
+        options.forEach { (key, label) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        clipMode = key
+                        prefs.edit().putString("clip_mode", key).apply()
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = clipMode == key,
+                    onClick = {
+                        clipMode = key
+                        prefs.edit().putString("clip_mode", key).apply()
+                    },
+                    colors = RadioButtonDefaults.colors(selectedColor = NeruppuOrange)
+                )
+                Text(label, color = TextPrimary, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(
+            "Se il telefono non supporta il video, viene inviata la sequenza di foto.",
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+    SettingRow(
+        icon = Icons.Default.Send,
+        label = "Comandi da Telegram",
+        subLabel = "/attiva /disattiva /stato /foto",
+        checked = remote,
+        onCheckedChange = {
+            remote = it
+            prefs.edit().putBoolean("remote_control", it).apply()
+        }
+    )
 }
 
 @Composable
