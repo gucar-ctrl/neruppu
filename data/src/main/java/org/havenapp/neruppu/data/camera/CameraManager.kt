@@ -26,6 +26,18 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -44,6 +56,16 @@ class CameraManager(private val context: Context) {
 
     private var imageCapture: ImageCapture? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+
+    /** When true, a VideoCapture use case is bound so short clips can be recorded. */
+    var enableVideo: Boolean = false
+
+    /** Becomes false if this device cannot bind photo + analysis + video together. */
+    var videoSupported: Boolean = true
+        private set
+
+    private var currentVideoEnabled: Boolean? = null
     private var motionAnalyzer: MotionAnalyzer? = null
      
     private val mutex = Mutex()
@@ -102,6 +124,47 @@ class CameraManager(private val context: Context) {
         }
     }
 
+    /** True when a video clip can be recorded right now. */
+    val canRecordVideo: Boolean get() = isBound && videoCapture != null
+
+    /**
+     * Records a silent clip of [durationMs] using the bound VideoCapture use case.
+     * Returns the MP4 file, or null if video is unavailable or recording failed.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    suspend fun recordClip(durationMs: Long): File? {
+        val capture = videoCapture ?: return null
+        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
+            .format(System.currentTimeMillis())
+        val outputDir = File(context.cacheDir, "clips").apply { mkdirs() }
+        val file = File(outputDir, "$name.mp4")
+        val finalized = CompletableDeferred<Boolean>()
+
+        val recording = withContext(Dispatchers.Main) {
+            try {
+                capture.output
+                    .prepareRecording(context, FileOutputOptions.Builder(file).build())
+                    .start(ContextCompat.getMainExecutor(context)) { event ->
+                        if (event is VideoRecordEvent.Finalize) {
+                            if (event.hasError()) {
+                                Log.e("CameraManager", "Clip finalize error: ${event.error}", event.cause)
+                            }
+                            // ERROR_NONE or a recoverable error still leaves a usable file in most cases
+                            finalized.complete(file.exists() && file.length() > 0)
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.e("CameraManager", "Unable to start clip recording", e)
+                null
+            }
+        } ?: return null
+
+        delay(durationMs)
+        withContext(Dispatchers.Main) { recording.stop() }
+        val ok = withTimeoutOrNull(15_000) { finalized.await() } ?: false
+        return if (ok) file else { file.delete(); null }
+    }
+
     fun getDifferenceMap(): Nothing? = null
 
     fun bindCamera(
@@ -110,7 +173,8 @@ class CameraManager(private val context: Context) {
         sensitivity: Int = 15,
         onMotionDetected: (Double) -> Unit
     ) {
-        if (isBound && currentCameraSide == useFrontCamera && currentLifecycleOwner == lifecycleOwner) {
+        if (isBound && currentCameraSide == useFrontCamera && currentLifecycleOwner == lifecycleOwner &&
+            currentVideoEnabled == enableVideo) {
             Log.d("CameraManager", "Camera already bound to service lifecycle. Keeping active.")
             return
         }
@@ -131,11 +195,11 @@ class CameraManager(private val context: Context) {
                 val resolutionSelector = ResolutionSelector.Builder()
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(640, 480),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
+                            Size(1920, 1080),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
                         )
                     )
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
                     .build()
                 
                 val analysisResolutionSelector = ResolutionSelector.Builder()
@@ -174,11 +238,42 @@ class CameraManager(private val context: Context) {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
 
-                cameraProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    *useCases.toTypedArray()
-                )
+                val wantVideo = enableVideo && videoSupported
+                if (wantVideo) {
+                    val recorder = Recorder.Builder()
+                        .setQualitySelector(
+                            QualitySelector.from(
+                                Quality.FHD,
+                                FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
+                            )
+                        )
+                        .build()
+                    videoCapture = VideoCapture.withOutput(recorder)
+                } else {
+                    videoCapture = null
+                }
+
+                try {
+                    val all = if (videoCapture != null) useCases + videoCapture!! else useCases
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        *all.toTypedArray()
+                    )
+                } catch (e: Exception) {
+                    if (videoCapture == null) throw e
+                    // Device can't run photo + analysis + video together: fall back to photos only.
+                    Log.w("CameraManager", "Video use case not supported with photo+analysis, falling back", e)
+                    videoSupported = false
+                    videoCapture = null
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        *useCases.toTypedArray()
+                    )
+                }
+                currentVideoEnabled = enableVideo
                 
                 isBound = true
                 currentCameraSide = useFrontCamera
@@ -199,6 +294,8 @@ class CameraManager(private val context: Context) {
             currentCameraSide = null
             currentLifecycleOwner = null
             imageCapture = null
+            videoCapture = null
+            currentVideoEnabled = null
             imageAnalysis?.clearAnalyzer()
             imageAnalysis = null
             motionAnalyzer?.cleanup()
