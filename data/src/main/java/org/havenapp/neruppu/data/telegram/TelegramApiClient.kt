@@ -80,6 +80,81 @@ class TelegramApiClient @Inject constructor(
         }
     }
 
+    /** Sends a photo and returns its Telegram message_id, so the picture can be replaced later (live view). */
+    suspend fun sendPhotoForId(bytes: ByteArray, caption: String): Result<Long> = runCatching {
+        val response: HttpResponse = client.post("$baseUrl/sendPhoto") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("caption", caption)
+                append("photo", bytes, Headers.build {
+                    append(HttpHeaders.ContentType, "image/jpeg")
+                    append(HttpHeaders.ContentDisposition, "filename=\"live.jpg\"")
+                })
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        val body = response.bodyAsText()
+        if (response.status.value !in 200..299) {
+            error("Telegram sendPhoto failed: ${response.status} ${body.take(200)}")
+        }
+        org.json.JSONObject(body).getJSONObject("result").getLong("message_id")
+    }
+
+    /** Replaces the picture and caption of a photo message the bot sent earlier. */
+    suspend fun editPhoto(messageId: Long, bytes: ByteArray, caption: String): Result<Unit> = runCatching {
+        val media = org.json.JSONObject()
+            .put("type", "photo")
+            .put("media", "attach://frame")
+            .put("caption", caption)
+        val response: HttpResponse = client.post("$baseUrl/editMessageMedia") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("message_id", messageId.toString())
+                append("media", media.toString())
+                append("frame", bytes, Headers.build {
+                    append(HttpHeaders.ContentType, "image/jpeg")
+                    append(HttpHeaders.ContentDisposition, "filename=\"frame.jpg\"")
+                })
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram editMessageMedia failed: ${response.status} ${response.bodyAsText().take(200)}")
+        }
+    }
+
+    /** Changes only the caption of a media message the bot sent earlier. */
+    suspend fun editCaption(messageId: Long, caption: String): Result<Unit> = runCatching {
+        val response: HttpResponse = client.post("$baseUrl/editMessageCaption") {
+            val formData = formData {
+                append("chat_id", configStore.chatId)
+                append("message_id", messageId.toString())
+                append("caption", caption)
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram editMessageCaption failed: ${response.status} ${response.bodyAsText().take(200)}")
+        }
+    }
+
+    /** Registers the bot's slash-command menu: pairs of (command without the slash, description). */
+    suspend fun setMyCommands(commands: List<Pair<String, String>>): Result<Unit> = runCatching {
+        val list = org.json.JSONArray()
+        commands.forEach { (name, description) ->
+            list.put(org.json.JSONObject().put("command", name).put("description", description))
+        }
+        val response: HttpResponse = client.post("$baseUrl/setMyCommands") {
+            val formData = formData {
+                append("commands", list.toString())
+            }
+            setBody(MultiPartFormDataContent(formData))
+        }
+        if (response.status.value !in 200..299) {
+            error("Telegram setMyCommands failed: ${response.status} ${response.bodyAsText().take(200)}")
+        }
+    }
+
     suspend fun sendAudio(bytes: ByteArray, caption: String): Result<Unit> = runCatching {
         val response: HttpResponse = client.post("$baseUrl/sendAudio") {
             val formData = formData {
