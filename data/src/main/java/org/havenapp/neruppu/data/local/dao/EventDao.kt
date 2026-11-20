@@ -56,7 +56,8 @@ interface EventDao {
     @Query("DELETE FROM events")
     suspend fun clearEvents()
 
-    @Query("SELECT * FROM events WHERE uploadStatusValue IN (1, 3) ORDER BY timestamp ASC LIMIT :limit")
+    // Events whose upload was cancelled (failureReason "Annullato", see MonitoringService.DISCARDED_REASON) are never retried.
+    @Query("SELECT * FROM events WHERE uploadStatusValue IN (1, 3) AND (failureReason IS NULL OR failureReason != 'Annullato') ORDER BY timestamp ASC LIMIT :limit")
     suspend fun getPendingUploadEvents(limit: Int): List<EventEntity>
 
     @Query("SELECT * FROM events ORDER BY timestamp DESC LIMIT 1")
