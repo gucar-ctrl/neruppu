@@ -627,6 +627,7 @@ fun TelegramExtrasSection() {
     var remote by remember { mutableStateOf(prefs.getBoolean("remote_control", false)) }
     var photoRes by remember { mutableStateOf(prefs.getString("photo_resolution", "fhd") ?: "fhd") }
     var videoQ by remember { mutableStateOf(prefs.getString("video_quality", "fhd") ?: "fhd") }
+    var alertPause by remember { mutableStateOf(prefs.getString("alert_pause_s", "30") ?: "30") }
 
     val options = listOf(
         "photo" to "Solo foto",
@@ -708,12 +709,34 @@ fun TelegramExtrasSection() {
             color = TextSecondary,
             style = MaterialTheme.typography.bodySmall
         )
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Pausa tra gli avvisi", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        PrefRadioGroup(
+            options = listOf(
+                "15" to "15 secondi",
+                "30" to "30 secondi",
+                "60" to "1 minuto",
+                "120" to "2 minuti"
+            ),
+            selected = alertPause,
+            onSelect = {
+                alertPause = it
+                prefs.edit().putString("alert_pause_s", it).apply()
+            }
+        )
+        Text(
+            "Dopo ogni avviso (foto ed eventuale video) non ne parte nessun altro per questo tempo, " +
+                "qualunque sensore scatti.",
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
     }
     Spacer(modifier = Modifier.height(6.dp))
     SettingRow(
         icon = Icons.Default.Send,
         label = "Comandi da Telegram",
-        subLabel = "/attiva /disattiva /stato /foto",
+        subLabel = "/attiva /disattiva /stato /foto /live /stop",
         checked = remote,
         onCheckedChange = {
             remote = it
