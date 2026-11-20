@@ -30,6 +30,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import org.havenapp.neruppu.BuildConfig
 import androidx.core.app.NotificationCompat
@@ -43,17 +44,21 @@ import androidx.work.WorkManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.havenapp.neruppu.R
 import org.havenapp.neruppu.data.audio.AudioRecorder
 import org.havenapp.neruppu.data.camera.CameraManager
 import org.havenapp.neruppu.data.telegram.TelegramApiClient
 import org.havenapp.neruppu.data.telegram.TelegramConfigStore
+import org.havenapp.neruppu.data.worker.MediaUploadWorker
 import org.json.JSONArray
 import org.json.JSONObject
 import org.havenapp.neruppu.data.sensors.*
 import org.havenapp.neruppu.domain.model.Event
 import org.havenapp.neruppu.domain.model.SensorType
 import org.havenapp.neruppu.domain.model.SensorEvent
+import org.havenapp.neruppu.domain.model.UploadStatus
 import org.havenapp.neruppu.domain.model.AlertTarget
 import org.havenapp.neruppu.domain.repository.AlertTargetRepository
 import org.havenapp.neruppu.domain.repository.MediaUploadRepository
@@ -62,9 +67,14 @@ import org.havenapp.neruppu.domain.usecase.HandleSensorEventUseCase
 import org.havenapp.neruppu.domain.usecase.AttachAudioToEventUseCase
 import org.havenapp.neruppu.worker.EventNotificationWorker
 import java.io.File
+import java.text.SimpleDateFormat
+import java.time.Instant
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -154,6 +164,7 @@ class MonitoringService : LifecycleService() {
                     updatePrefValues()
                     withContext(Dispatchers.Main) { updateRemoteControl() }
                 }
+                "alert_pause_s" -> updatePrefValues()
                 "audio_threshold", "save_photos" -> {
                     Log.d("MonitoringService", "Prefs changed ($key), updating values...")
                     updatePrefValues()
@@ -171,6 +182,7 @@ class MonitoringService : LifecycleService() {
     private var remoteControlPref = false
     private var photoResolutionPref = "fhd"
     private var videoQualityPref = "fhd"
+    private var alertPausePref = 30
 
     private fun updatePrefValues() {
         val prefs = getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
@@ -178,6 +190,7 @@ class MonitoringService : LifecycleService() {
         remoteControlPref = prefs.getBoolean("remote_control", false)
         photoResolutionPref = prefs.getString("photo_resolution", "fhd") ?: "fhd"
         videoQualityPref = prefs.getString("video_quality", "fhd") ?: "fhd"
+        alertPausePref = prefs.getString("alert_pause_s", "30")?.toIntOrNull()?.coerceIn(5, 600) ?: 30
         savePhotosPref = prefs.getBoolean("save_photos", true)
         sensitivityPref = prefs.getFloat("motion_sensitivity", 15f)
         useFrontCameraPref = prefs.getBoolean("use_front_camera", false)
@@ -194,6 +207,100 @@ class MonitoringService : LifecycleService() {
     private var lastEventTime = ConcurrentHashMap<SensorType, Long>()
     private var microphoneJob: Job? = null
     private var uiSensorsJob: Job? = null
+
+    // Alert gate: one alert (photo + optional clip) at a time, then a pause with no new alerts.
+    private val alertBusy = AtomicBoolean(false)
+    private val alertPausedUntil = AtomicLong(0L)
+    private var followUpJob: Job? = null
+    private var liveJob: Job? = null
+
+    // Not cancelled in onDestroy, so queued uploads are still discarded when the service stops.
+    private val purgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val purgeMutex = Mutex()
+    private val purgedTotal = AtomicInteger(0)
+
+    private val alertStartedAt = AtomicLong(0L)
+
+    /** An alert that holds the gate for too long (camera or network hang) must not block the alarm forever. */
+    private fun alertStuck(now: Long): Boolean =
+        alertBusy.get() && now - alertStartedAt.get() > ALERT_MAX_HOLD_MS
+
+    /** True when a new alert may start: none running and the pause after the last one is over. */
+    private fun alertGateOpen(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        return (!alertBusy.get() || alertStuck(now)) && now >= alertPausedUntil.get()
+    }
+
+    /** Takes the alert gate. Returns false while another alert runs or the pause is still active. */
+    private fun tryBeginAlert(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (alertStuck(now)) {
+            Log.w("MonitoringService", "Alert gate was stuck for more than ${ALERT_MAX_HOLD_MS / 1000} s, releasing it")
+            alertBusy.set(false)
+        }
+        if (!alertBusy.compareAndSet(false, true)) return false
+        if (now < alertPausedUntil.get()) {
+            alertBusy.set(false)
+            return false
+        }
+        alertStartedAt.set(now)
+        return true
+    }
+
+    /** Releases the gate and starts the pause during which no new alert is accepted. */
+    private fun endAlert() {
+        alertPausedUntil.set(SystemClock.elapsedRealtime() + alertPausePref * 1000L)
+        alertBusy.set(false)
+    }
+
+    /**
+     * Stops everything that could still send media: the follow-up clip, the live view and the
+     * queued uploads. Safe to call from any thread.
+     */
+    private fun cancelAlerts() {
+        followUpJob?.cancel()
+        followUpJob = null
+        liveJob?.cancel()
+        liveJob = null
+        isRecordingClip.set(false)
+        alertBusy.set(false)
+        alertPausedUntil.set(0L)
+        try {
+            WorkManager.getInstance(this).cancelUniqueWork(MediaUploadWorker.UNIQUE_WORK_NAME)
+        } catch (e: Exception) {
+            Log.w("MonitoringService", "Could not cancel the upload work", e)
+        }
+        purgeScope.launch { purgeQueuedUploads() }
+    }
+
+    /**
+     * Marks queued uploads (pending, or failed and waiting for a retry) as discarded so the upload
+     * worker never sends them. With [cutoff], only events older than that instant are discarded.
+     */
+    private suspend fun purgeQueuedUploads(cutoff: Instant? = null) = purgeMutex.withLock {
+        var rounds = 0
+        while (rounds++ < 20) {
+            val batch = try {
+                sensorRepository.getPendingUploadEvents(100)
+            } catch (e: Exception) {
+                Log.w("MonitoringService", "Could not read queued uploads", e)
+                return@withLock
+            }
+            val targets = if (cutoff == null) batch else batch.filter { it.timestamp.isBefore(cutoff) }
+            if (targets.isEmpty()) return@withLock
+            for (event in targets) {
+                try {
+                    sensorRepository.updateEventUploadStatus(
+                        event.id, UploadStatus.FAILED, event.uploadTarget, null, DISCARDED_REASON
+                    )
+                    purgedTotal.incrementAndGet()
+                } catch (e: Exception) {
+                    Log.w("MonitoringService", "Could not discard event ${event.id}", e)
+                }
+            }
+            if (targets.size < batch.size) return@withLock
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -335,6 +442,7 @@ class MonitoringService : LifecycleService() {
         when (intent?.action) {
             ACTION_STOP_SERVICE -> {
                 Log.i("MonitoringService", "Stopping service via notification action")
+                cancelAlerts()
                 stopSelf()
             }
             "TRIGGER_MOTION_EVENT" -> {
@@ -353,6 +461,10 @@ class MonitoringService : LifecycleService() {
         _isMonitoring.value = !_isMonitoring.value
         if (_isMonitoring.value) {
             Log.d("MonitoringService", "Monitoring ACTIVATED")
+            // Start clean: no pause left over and no stale uploads from earlier sessions.
+            alertBusy.set(false)
+            alertPausedUntil.set(0L)
+            purgeScope.launch { purgeQueuedUploads(cutoff = Instant.ofEpochMilli(now)) }
             _sessionStartTime.value = now
             getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
                 .edit()
@@ -363,6 +475,8 @@ class MonitoringService : LifecycleService() {
             updateNotification()
         } else {
             Log.d("MonitoringService", "Monitoring DEACTIVATED")
+            // Stop everything in flight: follow-up clip, queued uploads, pause gate.
+            cancelAlerts()
             _lastGuardedTime.value = now
             getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
                 .edit()
@@ -420,8 +534,16 @@ class MonitoringService : LifecycleService() {
         }
 
         if (sensorsJob?.isActive == true) {
-            Log.d("MonitoringService", "Sensors already running. Skipping re-initialization.")
-            return
+            if (_isMonitoring.value) {
+                Log.d("MonitoringService", "Sensors already running. Skipping re-initialization.")
+                return
+            }
+            // Disarmed while the UI is still open: the alarm sensors must stop raising events.
+            Log.d("MonitoringService", "Disarmed but sensors still running. Stopping them.")
+            sensorsJob?.cancel()
+            sensorsJob = null
+            microphoneJob?.cancel()
+            microphoneJob = null
         }
         
 // Start sensor data flows only if we are monitoring
@@ -434,8 +556,10 @@ class MonitoringService : LifecycleService() {
                     .buffer()
                     .onEach { magnitude ->
                         Log.v("MonitoringService", "Motion event received")
-                        serviceScope.launch {
-                            handleEvent(SensorType.ACCELEROMETER, "Physical motion detected: Magnitude $magnitude")
+                        if (_isMonitoring.value) {
+                            serviceScope.launch {
+                                handleEvent(SensorType.ACCELEROMETER, "Physical motion detected: Magnitude $magnitude")
+                            }
                         }
                     }
 
@@ -444,8 +568,10 @@ class MonitoringService : LifecycleService() {
                     .onEach { lux ->
                         _lightLevel.value = lux
                         Log.v("MonitoringService", "Light event received")
-                        serviceScope.launch {
-                            handleEvent(SensorType.LIGHT, "Light change detected: $lux lux")
+                        if (_isMonitoring.value) {
+                            serviceScope.launch {
+                                handleEvent(SensorType.LIGHT, "Light change detected: $lux lux")
+                            }
                         }
                     }
 
@@ -455,7 +581,9 @@ class MonitoringService : LifecycleService() {
                 // Significant Motion Monitoring (Ultra-low power wakeups)
                 launch {
                     significantMotionDriver.observeSignificantMotion().collect {
-                        handleEvent(SensorType.ACCELEROMETER, "Significant motion detected (hardware trigger)")
+                        if (_isMonitoring.value) {
+                            handleEvent(SensorType.ACCELEROMETER, "Significant motion detected (hardware trigger)")
+                        }
                     }
                 }
                 
@@ -513,11 +641,17 @@ class MonitoringService : LifecycleService() {
                     }
 
                     // CRITICAL: Check threshold BEFORE compareAndSet to avoid blocking
-                    if (_isMonitoring.value && spike > threshold && isRecordingAudio.compareAndSet(false, true)) {
+                    if (_isMonitoring.value && spike > threshold && alertGateOpen() &&
+                        isRecordingAudio.compareAndSet(false, true)) {
                         Log.i("MonitoringService", "AUDIO TRIGGER (SPIKE): $spike (Threshold: $threshold, Fast: $fastBaseline, Slow: $slowBaseline)")
                         serviceScope.launch {
                             val eventId = handleEvent(SensorType.MICROPHONE, "Acoustic spike detected: ${spike.toInt()}")
-                            startAudioRecording(eventId)
+                            if (eventId == -1L) {
+                                // Alert paused, or the event could not be saved: nothing to record.
+                                isRecordingAudio.set(false)
+                            } else {
+                                startAudioRecording(eventId)
+                            }
                         }
                     } else if (spike > (threshold * 0.5f)) {
                         // Log near-misses to help user calibrate
@@ -560,7 +694,7 @@ class MonitoringService : LifecycleService() {
                 // RESUME monitoring ASAP
                 isRecordingAudio.set(false)
                 Log.d("MonitoringService", "Resetting audio recording flag and restarting monitoring.")
-                startMicrophoneMonitoring()
+                if (_isMonitoring.value) startMicrophoneMonitoring()
                 
                 // Process the captured file and alerts OUTSIDE the monitoring pause
                 if (uri != null && audioFile != null && eventId != -1L) {
@@ -576,7 +710,8 @@ class MonitoringService : LifecycleService() {
                         } catch (e: Exception) {
                             Log.w("MonitoringService", "Failed to delete temp audio file", e)
                         }
-                        if (alertTargetRepository.activeTarget != AlertTarget.NONE) {
+                        // Disarmed while recording: the clip stays on the phone, nothing is sent.
+                        if (_isMonitoring.value && alertTargetRepository.activeTarget != AlertTarget.NONE) {
                             mediaUploadRepository.enqueueUpload(eventId)
                         }
                     }
@@ -589,92 +724,110 @@ class MonitoringService : LifecycleService() {
         println("Neruppu: handleEvent type=$type")
         val now = System.currentTimeMillis()
         val lastTime = lastEventTime[type] ?: 0L
-        
+
         // Cooldown: 3 seconds for the same type, unless it's a microphone event which has its own logic
         if (type != SensorType.MICROPHONE && now - lastTime < 3000) {
             Log.d("MonitoringService", "Event suppressed by cooldown: $type")
             return -1
         }
-        
+
+        // Global gate: one alert at a time, then a pause with no new alert from any sensor.
+        if (!tryBeginAlert()) {
+            Log.d("MonitoringService", "Event ignored (alert running or in pause): $type")
+            return -1
+        }
         lastEventTime[type] = now
 
-        Log.i("MonitoringService", ">>> TRIGGERING EVENT: $type - $description")
-        
-        // 1. Capture photo bytes if possible
-        val imageBytes: ByteArray? = if (savePhotosPref) {
-            try {
-                Log.d("MonitoringService", "Attempting to capture photo for event...")
-                val uri = cameraManager.capturePhoto()
-                withContext(Dispatchers.IO) {
-                    uri?.let { contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() } }
-                }
-            } catch (e: Exception) {
-                Log.e("MonitoringService", "CRITICAL FAILURE: Photo capture threw exception", e)
-                null
-            }
-        } else null
+        // When a follow-up clip is started, it releases the gate once the clip has been sent.
+        var followUpStarted = false
+        try {
+            Log.i("MonitoringService", ">>> TRIGGERING EVENT: $type - $description")
 
-        // 2. Prepare SensorEvent for Use Case
-        val sensorEvent = SensorEvent(
-            sensorType = type,
-            description = description,
-            timestamp = now,
-            imageBytes = imageBytes
-        )
-
-        // 3. Orchestrate via Use Case (saves locally + logs in DB + sends Matrix alert)
-        println("Neruppu: Calling HandleSensorEventUseCase for $type")
-        Log.d("MonitoringService", "Calling HandleSensorEventUseCase for $type")
-        val result = handleSensorEventUseCase.execute(sensorEvent)
-        println("Neruppu: UseCase result=$result")
-        val id = result.getOrDefault(-1L)
-        
-        if (result.isFailure) {
-            Log.e("MonitoringService", "UseCase failed", result.exceptionOrNull())
-        }
-
-        if (id > 0 && type != SensorType.MICROPHONE && alertTargetRepository.activeTarget != AlertTarget.NONE) {
-            serviceScope.launch {
+            // 1. Capture photo bytes if possible
+            val imageBytes: ByteArray? = if (savePhotosPref) {
                 try {
-                    mediaUploadRepository.enqueueUpload(id)
+                    Log.d("MonitoringService", "Attempting to capture photo for event...")
+                    val uri = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) { cameraManager.capturePhoto() }
+                    withContext(Dispatchers.IO) {
+                        uri?.let { contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() } }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Log.w("MonitoringService", "Failed to enqueue media upload for event $id", e)
+                    Log.e("MonitoringService", "CRITICAL FAILURE: Photo capture threw exception", e)
+                    null
+                }
+            } else null
+
+            // 2. Prepare SensorEvent for Use Case
+            val sensorEvent = SensorEvent(
+                sensorType = type,
+                description = description,
+                timestamp = now,
+                imageBytes = imageBytes
+            )
+
+            // 3. Orchestrate via Use Case (saves locally + logs in DB + sends Matrix alert)
+            println("Neruppu: Calling HandleSensorEventUseCase for $type")
+            Log.d("MonitoringService", "Calling HandleSensorEventUseCase for $type")
+            val result = handleSensorEventUseCase.execute(sensorEvent)
+            println("Neruppu: UseCase result=$result")
+            val id = result.getOrDefault(-1L)
+
+            if (result.isFailure) {
+                Log.e("MonitoringService", "UseCase failed", result.exceptionOrNull())
+            }
+
+            if (id > 0 && type != SensorType.MICROPHONE && alertTargetRepository.activeTarget != AlertTarget.NONE) {
+                serviceScope.launch {
+                    try {
+                        mediaUploadRepository.enqueueUpload(id)
+                    } catch (e: Exception) {
+                        Log.w("MonitoringService", "Failed to enqueue media upload for event $id", e)
+                    }
                 }
             }
-        }
 
-        if (type != SensorType.MICROPHONE && clipModePref != CLIP_PHOTO &&
-            alertTargetRepository.activeTarget == AlertTarget.TELEGRAM &&
-            isRecordingClip.compareAndSet(false, true)) {
-            serviceScope.launch {
-                try {
-                    sendFollowUpClip(type)
-                } catch (e: Exception) {
-                    Log.e("MonitoringService", "Follow-up clip failed", e)
-                } finally {
-                    isRecordingClip.set(false)
+            if (type != SensorType.MICROPHONE && clipModePref != CLIP_PHOTO &&
+                alertTargetRepository.activeTarget == AlertTarget.TELEGRAM &&
+                isRecordingClip.compareAndSet(false, true)) {
+                followUpStarted = true
+                followUpJob = serviceScope.launch {
+                    try {
+                        sendFollowUpClip(type)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e("MonitoringService", "Follow-up clip failed", e)
+                    } finally {
+                        isRecordingClip.set(false)
+                        // The pause starts once the video is out, unless the alert was cancelled.
+                        if (isActive) endAlert()
+                    }
                 }
             }
-        }
-        
-        // Schedule deferred notification via WorkManager (Best Practice)
-        val workData = Data.Builder()
-            .putString("event_type", type.name)
-            .putString("description", description)
-            .build()
-        
-        val notificationWork = OneTimeWorkRequestBuilder<EventNotificationWorker>()
-            .setInputData(workData)
-            .build()
-            
-        WorkManager.getInstance(this).enqueueUniqueWork(
-            "security_notification",
-            androidx.work.ExistingWorkPolicy.REPLACE,
-            notificationWork
-        )
 
-        Log.i("MonitoringService", "EVENT PROCESSED: $type (Local ID: $id)")
-        return id
+            // Schedule deferred notification via WorkManager (Best Practice)
+            val workData = Data.Builder()
+                .putString("event_type", type.name)
+                .putString("description", description)
+                .build()
+
+            val notificationWork = OneTimeWorkRequestBuilder<EventNotificationWorker>()
+                .setInputData(workData)
+                .build()
+
+            WorkManager.getInstance(this).enqueueUniqueWork(
+                "security_notification",
+                androidx.work.ExistingWorkPolicy.REPLACE,
+                notificationWork
+            )
+
+            Log.i("MonitoringService", "EVENT PROCESSED: $type (Local ID: $id)")
+            return id
+        } finally {
+            if (!followUpStarted) endAlert()
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -716,19 +869,62 @@ class MonitoringService : LifecycleService() {
         }.onFailure { Log.e("MonitoringService", "Photo burst send failed", it) }
     }
 
-    private suspend fun readAndDeleteCapture(): ByteArray? = try {
-        val uri = cameraManager.capturePhoto()
+    private suspend fun readAndDeleteCapture(live: Boolean = false): ByteArray? = try {
+        val uri = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) { cameraManager.capturePhoto() }
         withContext(Dispatchers.IO) {
             uri?.path?.let { path ->
                 val f = File(path)
                 val bytes = if (f.exists()) f.readBytes() else null
                 f.delete()
-                bytes?.let { shrinkForTelegram(it) }
+                bytes?.let { if (live) shrinkForLive(it) else shrinkForTelegram(it) }
             }
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Log.e("MonitoringService", "Capture for Telegram failed", e)
         null
+    }
+
+    /** Smaller, upright frame for the live view: at most [LIVE_MAX_SIDE] px, JPEG quality 75. */
+    private fun shrinkForLive(bytes: ByteArray): ByteArray {
+        if (bytes.size <= LIVE_MAX_BYTES) return bytes
+        return try {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val longSide = maxOf(bounds.outWidth, bounds.outHeight)
+            var sample = 1
+            while (longSide / (sample * 2) >= LIVE_MAX_SIDE) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return bytes
+            // Decoding drops the EXIF rotation, so apply it to the pixels.
+            val rotation = try {
+                when (android.media.ExifInterface(java.io.ByteArrayInputStream(bytes)).getAttributeInt(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL
+                )) {
+                    android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                    android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                    android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                    else -> 0f
+                }
+            } catch (e: Exception) {
+                0f
+            }
+            val upright = if (rotation != 0f) {
+                val m = android.graphics.Matrix().apply { postRotate(rotation) }
+                android.graphics.Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, m, true)
+                    .also { if (it !== decoded) decoded.recycle() }
+            } else decoded
+            java.io.ByteArrayOutputStream().use { out ->
+                upright.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, out)
+                upright.recycle()
+                out.toByteArray()
+            }
+        } catch (e: Throwable) {
+            Log.w("MonitoringService", "Unable to shrink live frame", e)
+            bytes
+        }
     }
 
     /** Telegram rejects photos over 10 MB: halve very large captures (e.g. 48 MP "max" mode). */
@@ -781,6 +977,8 @@ class MonitoringService : LifecycleService() {
 
     private suspend fun pollTelegramCommands() {
         Log.i("MonitoringService", "Telegram remote control started")
+        telegramApiClient.setMyCommands(BOT_COMMANDS)
+            .onFailure { Log.w("MonitoringService", "setMyCommands failed: ${it.message}") }
         var offset = 0L
         val ignoreBefore = System.currentTimeMillis() / 1000 - 10
         while (currentCoroutineContext().isActive) {
@@ -817,11 +1015,39 @@ class MonitoringService : LifecycleService() {
                 reply("\u2705 Monitoraggio ATTIVO")
             }
             "/disattiva", "/disarm" -> {
-                if (_isMonitoring.value) withContext(Dispatchers.Main) { toggleMonitoring() }
-                reply("\u23F8\uFE0F Monitoraggio SPENTO")
+                purgedTotal.set(0)
+                val wasOn = _isMonitoring.value
+                if (wasOn) withContext(Dispatchers.Main) { toggleMonitoring() } else cancelAlerts()
+                // Wait for the queue clean-up so the reply can say how many uploads were dropped.
+                purgeQueuedUploads()
+                val dropped = purgedTotal.getAndSet(0)
+                reply(
+                    (if (wasOn) "\u23F8\uFE0F Monitoraggio SPENTO" else "\u23F8\uFE0F Monitoraggio gi\u00E0 spento") +
+                        ". Invii fermati" + if (dropped > 0) " ($dropped in coda annullati)." else "."
+                )
             }
             "/stato", "/status" -> reply(statusText())
             "/foto", "/photo" -> sendRemoteSnapshot()
+            "/live" -> {
+                val minutes = rawText.trim().split(Regex("\\s+")).getOrNull(1)?.toIntOrNull()
+                    ?.coerceIn(1, LIVE_MAX_MINUTES) ?: LIVE_DEFAULT_MINUTES
+                startLive(minutes)
+            }
+            "/stop" -> {
+                purgedTotal.set(0)
+                val wasLive = liveJob?.isActive == true
+                cancelAlerts()
+                purgeQueuedUploads()
+                // Stay quiet for the usual pause, so a still-moving scene does not restart the flow at once.
+                alertPausedUntil.set(SystemClock.elapsedRealtime() + alertPausePref * 1000L)
+                val dropped = purgedTotal.getAndSet(0)
+                reply(
+                    "\u23F9\uFE0F Fermato" + (if (wasLive) " il live" else "") +
+                        (if (dropped > 0) ", $dropped invii in coda annullati" else "") +
+                        ". Il monitoraggio resta " + (if (_isMonitoring.value) "attivo" else "spento") +
+                        ", nessun nuovo avviso per $alertPausePref s."
+                )
+            }
             else -> reply(HELP_TEXT)
         }
     }
@@ -844,6 +1070,8 @@ class MonitoringService : LifecycleService() {
             appendLine(if (_isMonitoring.value) "\uD83D\uDFE2 Monitoraggio ATTIVO" else "\u26AA Monitoraggio SPENTO")
             appendLine("Batteria: $level%" + if (charging) " (in carica)" else " (NON in carica)")
             appendLine("Invio dopo rilevamento: $mode")
+            appendLine("Pausa tra gli avvisi: $alertPausePref s")
+            if (liveJob?.isActive == true) appendLine("Live in corso (/stop per fermarlo)")
             append("Risoluzione foto: ${cameraManager.actualPhotoResolution ?: "fotocamera spenta"}")
             cameraManager.actualVideoResolution?.let { append("\nRisoluzione video: $it") }
         }
@@ -866,6 +1094,80 @@ class MonitoringService : LifecycleService() {
         } finally {
             if (tempBind) {
                 withContext(Dispatchers.Main) { setUiActive(false) }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Quasi-live view: one Telegram photo that is edited in place every few seconds
+    // ---------------------------------------------------------------------
+
+    private fun startLive(minutes: Int) {
+        val previous = liveJob
+        liveJob = serviceScope.launch {
+            // Let the previous session finish its clean-up (camera release) before starting a new one.
+            previous?.cancelAndJoin()
+            runLive(minutes)
+        }
+    }
+
+    private suspend fun runLive(minutes: Int) {
+        val tempBind = !_isMonitoring.value && !_uiActive.value
+        if (tempBind) {
+            withContext(Dispatchers.Main) { setUiActive(true) }
+            delay(2_500) // let the camera start and settle exposure
+        }
+        acquireWakeLock()
+        val clock = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        var messageId: Long? = null
+        var failures = 0
+        val endAt = SystemClock.elapsedRealtime() + minutes * 60_000L
+        reply("\uD83D\uDD34 Live per $minutes min: la foto si aggiorna ogni ${LIVE_INTERVAL_MS / 1000} secondi circa. /stop per fermarlo.")
+        try {
+            while (currentCoroutineContext().isActive && SystemClock.elapsedRealtime() < endAt && failures < 5) {
+                val started = SystemClock.elapsedRealtime()
+                acquireWakeLock() // no-op while held; renews it after the 10-minute timeout
+                if (isRecordingClip.get()) {
+                    delay(1_000) // do not compete with the alert video
+                    continue
+                }
+                val bytes = readAndDeleteCapture(live = true)
+                if (bytes == null) {
+                    failures++
+                } else {
+                    val caption = "\uD83D\uDD34 Live ${clock.format(Date())}"
+                    val id = messageId
+                    if (id == null) {
+                        telegramApiClient.sendPhotoForId(bytes, caption)
+                            .onSuccess { messageId = it; failures = 0 }
+                            .onFailure { failures++; Log.w("MonitoringService", "Live first frame failed: ${it.message}") }
+                    } else {
+                        telegramApiClient.editPhoto(id, bytes, caption)
+                            .onSuccess { failures = 0 }
+                            .onFailure {
+                                val why = it.message.orEmpty()
+                                Log.w("MonitoringService", "Live edit failed: $why")
+                                if (!why.contains("not modified", ignoreCase = true)) {
+                                    failures++
+                                    // The message was deleted by the user: start a fresh one next round.
+                                    if (why.contains("not found", ignoreCase = true) ||
+                                        why.contains("can't be edited", ignoreCase = true)) {
+                                        messageId = null
+                                    }
+                                }
+                            }
+                    }
+                }
+                delay((LIVE_INTERVAL_MS - (SystemClock.elapsedRealtime() - started)).coerceAtLeast(500))
+            }
+        } finally {
+            withContext(NonCancellable) {
+                if (failures >= 5) reply("Live interrotto: troppi errori di invio.")
+                messageId?.let {
+                    telegramApiClient.editCaption(it, "\u23F9\uFE0F Live terminato alle ${clock.format(Date())}")
+                }
+                if (tempBind) withContext(Dispatchers.Main) { setUiActive(false) }
+                stopWakeLockIfNeeded()
             }
         }
     }
@@ -945,10 +1247,29 @@ class MonitoringService : LifecycleService() {
         const val CLIP_BURST = "burst"
         const val CLIP_DURATION_MS = 10_000L
         const val BURST_EXTRA_PHOTOS = 4
+        /** failureReason written on events whose upload was cancelled; the DAO query skips them. */
+        const val DISCARDED_REASON = "Annullato"
+        const val ALERT_MAX_HOLD_MS = 150_000L
+        const val CAPTURE_TIMEOUT_MS = 15_000L
+        const val LIVE_INTERVAL_MS = 5_000L
+        const val LIVE_DEFAULT_MINUTES = 2
+        const val LIVE_MAX_MINUTES = 10
+        const val LIVE_MAX_SIDE = 1280
+        const val LIVE_MAX_BYTES = 400_000
+        val BOT_COMMANDS = listOf(
+            "attiva" to "Accende il monitoraggio",
+            "disattiva" to "Spegne il monitoraggio e ferma gli invii",
+            "stato" to "Stato, batteria e impostazioni",
+            "foto" to "Scatta una foto adesso",
+            "live" to "Foto che si aggiorna ogni pochi secondi",
+            "stop" to "Ferma il live e gli invii in corso"
+        )
         const val HELP_TEXT = "Comandi disponibili:\n" +
             "/attiva - accende il monitoraggio\n" +
-            "/disattiva - spegne il monitoraggio\n" +
+            "/disattiva - spegne il monitoraggio e ferma gli invii\n" +
             "/stato - stato e batteria\n" +
-            "/foto - scatta una foto adesso"
+            "/foto - scatta una foto adesso\n" +
+            "/live [minuti] - foto che si aggiorna ogni pochi secondi (2 min di default, massimo 10)\n" +
+            "/stop - ferma il live e gli invii in corso"
     }
 }
