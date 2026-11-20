@@ -2,4 +2,5 @@
 <paths>
     <files-path name="captures" path="captures/" />
     <files-path name="audio_captures" path="audio_captures/" />
+    <cache-path name="qr_scans" path="qr/" />
 </paths>
