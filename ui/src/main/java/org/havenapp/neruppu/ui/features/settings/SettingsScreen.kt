@@ -408,7 +408,8 @@ fun SettingsScreen(
         uiState = telegramUiState,
         actions = telegramViewModel,
         fields = telegramFields,
-        descriptionText = "Provide Telegram bot credentials to receive real-time alerts. Use @BotFather to create a bot."
+        descriptionText = "Provide Telegram bot credentials to receive real-time alerts. Use @BotFather to create a bot.",
+        extraContent = { TelegramQrPairing(telegramViewModel) }
     )
 
     IntegrationConfigPopup(
