@@ -74,7 +74,8 @@ fun IntegrationConfigPopup(
     uiState: IntegrationConfigUiState,
     actions: IntegrationConfigActions,
     fields: List<IntegrationField>,
-    descriptionText: String
+    descriptionText: String,
+    extraContent: (@Composable () -> Unit)? = null
 ) {
     if (!isVisible) return
 
@@ -92,6 +93,8 @@ fun IntegrationConfigPopup(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                extraContent?.invoke()
+
                 fields.forEach { field ->
                     // Show/hide toggle for secret fields, so pasted tokens can be checked visually.
                     var revealed by remember(field.label) { mutableStateOf(false) }
