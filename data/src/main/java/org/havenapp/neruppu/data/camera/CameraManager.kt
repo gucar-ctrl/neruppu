@@ -82,7 +82,34 @@ class CameraManager(private val context: Context) {
 
     /** Resolution actually chosen by CameraX for video clips (null if video is not bound). */
     val actualVideoResolution: String?
-        get() = videoCapture?.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" }
+        get() {
+            if (videoCapture == null) return null
+            val info = boundCameraInfo ?: return null
+            return try {
+                val supported = Recorder.getVideoCapabilities(info)
+                    .getSupportedQualities(androidx.camera.core.DynamicRange.SDR)
+                val order = listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD)
+                val requested = when (videoQuality) {
+                    "sd" -> Quality.SD
+                    "hd" -> Quality.HD
+                    else -> Quality.FHD
+                }
+                val idx = order.indexOf(requested)
+                // Same rule as FallbackStrategy.lowerQualityOrHigherThan(requested)
+                val pick = (order.drop(idx) + order.take(idx).reversed()).firstOrNull { it in supported }
+                when (pick) {
+                    Quality.UHD -> "2160p"
+                    Quality.FHD -> "1080p"
+                    Quality.HD -> "720p"
+                    Quality.SD -> "480p"
+                    else -> "sconosciuta"
+                }
+            } catch (e: Exception) {
+                "sconosciuta"
+            }
+        }
+
+    private var boundCameraInfo: androidx.camera.core.CameraInfo? = null
     private var motionAnalyzer: MotionAnalyzer? = null
      
     private val mutex = Mutex()
@@ -280,11 +307,11 @@ class CameraManager(private val context: Context) {
 
                 try {
                     val all = if (videoCapture != null) useCases + videoCapture!! else useCases
-                    cameraProvider.bindToLifecycle(
+                    boundCameraInfo = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,
                         *all.toTypedArray()
-                    )
+                    ).cameraInfo
                 } catch (e: Exception) {
                     if (videoCapture == null) throw e
                     // Device can't run photo + analysis + video together: fall back to photos only.
@@ -292,11 +319,11 @@ class CameraManager(private val context: Context) {
                     videoSupported = false
                     videoCapture = null
                     cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
+                    boundCameraInfo = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,
                         *useCases.toTypedArray()
-                    )
+                    ).cameraInfo
                 }
                 currentVideoEnabled = enableVideo
                 currentPhotoResolution = photoResolution
