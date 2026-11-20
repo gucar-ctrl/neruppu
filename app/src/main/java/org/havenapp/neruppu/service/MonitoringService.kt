@@ -145,7 +145,7 @@ class MonitoringService : LifecycleService() {
                     updatePrefValues()
                     startMonitoring()
                 }
-                "clip_mode" -> {
+                "clip_mode", "photo_resolution", "video_quality" -> {
                     Log.d("MonitoringService", "Clip mode changed, re-binding camera...")
                     updatePrefValues()
                     if (_isMonitoring.value || _uiActive.value) startMonitoring()
@@ -169,11 +169,15 @@ class MonitoringService : LifecycleService() {
     private var audioThresholdPref = 200f
     private var clipModePref = CLIP_PHOTO
     private var remoteControlPref = false
+    private var photoResolutionPref = "fhd"
+    private var videoQualityPref = "fhd"
 
     private fun updatePrefValues() {
         val prefs = getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
         clipModePref = prefs.getString("clip_mode", CLIP_PHOTO) ?: CLIP_PHOTO
         remoteControlPref = prefs.getBoolean("remote_control", false)
+        photoResolutionPref = prefs.getString("photo_resolution", "fhd") ?: "fhd"
+        videoQualityPref = prefs.getString("video_quality", "fhd") ?: "fhd"
         savePhotosPref = prefs.getBoolean("save_photos", true)
         sensitivityPref = prefs.getFloat("motion_sensitivity", 15f)
         useFrontCameraPref = prefs.getBoolean("use_front_camera", false)
@@ -397,6 +401,8 @@ class MonitoringService : LifecycleService() {
 // Always bind camera if we are either Monitoring OR UI is active
         if (_isMonitoring.value || _uiActive.value) {
             cameraManager.enableVideo = clipModePref == CLIP_VIDEO
+            cameraManager.photoResolution = photoResolutionPref
+            cameraManager.videoQuality = videoQualityPref
             cameraManager.bindCamera(
                 lifecycleOwner = this,
                 useFrontCamera = useFrontCameraPref,
@@ -717,12 +723,29 @@ class MonitoringService : LifecycleService() {
                 val f = File(path)
                 val bytes = if (f.exists()) f.readBytes() else null
                 f.delete()
-                bytes
+                bytes?.let { shrinkForTelegram(it) }
             }
         }
     } catch (e: Exception) {
         Log.e("MonitoringService", "Capture for Telegram failed", e)
         null
+    }
+
+    /** Telegram rejects photos over 10 MB: halve very large captures (e.g. 48 MP "max" mode). */
+    private fun shrinkForTelegram(bytes: ByteArray): ByteArray {
+        if (bytes.size <= 5_000_000) return bytes
+        return try {
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return bytes
+            java.io.ByteArrayOutputStream().use { out ->
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                bmp.recycle()
+                out.toByteArray()
+            }
+        } catch (e: Throwable) {
+            Log.w("MonitoringService", "Unable to shrink photo", e)
+            bytes
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -820,7 +843,9 @@ class MonitoringService : LifecycleService() {
         return buildString {
             appendLine(if (_isMonitoring.value) "\uD83D\uDFE2 Monitoraggio ATTIVO" else "\u26AA Monitoraggio SPENTO")
             appendLine("Batteria: $level%" + if (charging) " (in carica)" else " (NON in carica)")
-            append("Invio dopo rilevamento: $mode")
+            appendLine("Invio dopo rilevamento: $mode")
+            append("Risoluzione foto: ${cameraManager.actualPhotoResolution ?: "fotocamera spenta"}")
+            cameraManager.actualVideoResolution?.let { append("\nRisoluzione video: $it") }
         }
     }
 
