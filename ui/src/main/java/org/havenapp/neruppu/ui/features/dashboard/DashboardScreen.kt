@@ -96,7 +96,7 @@ fun DashboardScreen(
                     ) {
                         Text(
                             text = stringResource(R.string.dashboard_live_sensors),
-                            color = TextSecondary,
+                            color = TextTertiary,
                             style = MaterialTheme.typography.labelMedium,
                             letterSpacing = 1.2.sp,
                             modifier = Modifier.padding(bottom = 12.dp)
@@ -159,7 +159,7 @@ fun DashboardTopbar() {
                 Icon(
                     painter = painterResource(id = R.drawable.neruppu_brand_logo),
                     contentDescription = null,
-                    tint = NeruppuOrange,
+                    tint = FaroAmber,
                     modifier = Modifier.size(28.dp)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
@@ -172,7 +172,7 @@ fun DashboardTopbar() {
                 )
                 Text(
                     text = stringResource(R.string.dashboard_brand_ppu),
-                    color = NeruppuOrange,
+                    color = FaroAmber,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
@@ -201,8 +201,8 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
             val elapsedMs = currentTime - sessionStartTime
             val hours = (elapsedMs / MS_PER_HOUR).toInt()
             val minutes = ((elapsedMs / MS_PER_MINUTE) % 60).toInt()
-            val startTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(sessionStartTime))
-            "$startTime \u00b7 ${hours}h ${minutes}m active"
+            val startTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(sessionStartTime))
+            "dalle $startTime \u00b7 ${hours} h ${minutes} min"
         }
         !isMonitoring && lastGuardedTime > 0 -> {
             val elapsedMs = currentTime - lastGuardedTime
@@ -225,7 +225,7 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
                 Box(
                     modifier = Modifier
                         .size(108.dp)
-                        .border(1.dp, NeruppuOrange.copy(alpha = 0.18f * pulseAlpha), CircleShape)
+                        .border(1.dp, FaroAmber.copy(alpha = 0.18f * pulseAlpha), CircleShape)
                 )
             }
             
@@ -233,13 +233,13 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
             Box(
                 modifier = Modifier
                     .size(80.dp)
-                    .border(3.dp, if (isMonitoring) NeruppuOrange else IdleBorder, CircleShape),
+                    .border(3.dp, if (isMonitoring) FaroAmber else IdleBorder, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.neruppu_brand_logo),
                     contentDescription = null,
-                    tint = if (isMonitoring) NeruppuOrange else IdleIcon,
+                    tint = if (isMonitoring) FaroAmber else IdleIcon,
                     modifier = Modifier.size(40.dp)
                 )
             }
@@ -249,13 +249,13 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
         Text(stringResource(R.string.dashboard_device_is), color = TextTertiary, style = MaterialTheme.typography.bodyMedium)
         Text(
             if (isMonitoring) stringResource(R.string.dashboard_guarding) else stringResource(R.string.dashboard_idle),
-            color = if (isMonitoring) BackgroundPrimary else TextSecondary,
+            color = if (isMonitoring) BackgroundPrimary else TextTertiary,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Medium
         )
         Text(
             timeText,
-            color = TextSecondary,
+            color = TextTertiary,
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(bottom = 16.dp)
         )
@@ -263,12 +263,12 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
         Row(
             modifier = Modifier
                 .background(
-                    if (isMonitoring) NeruppuGreen.copy(alpha = 0.15f) else TextSecondary.copy(alpha = 0.12f),
+                    if (isMonitoring) FaroGreen.copy(alpha = 0.15f) else TextTertiary.copy(alpha = 0.12f),
                     CircleShape
                 )
                 .border(
                     0.5.dp,
-                    if (isMonitoring) NeruppuGreen.copy(alpha = 0.3f) else BorderTertiary,
+                    if (isMonitoring) FaroGreen.copy(alpha = 0.3f) else BorderTertiary,
                     CircleShape
                 )
                 .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -278,11 +278,11 @@ fun ShieldHero(isMonitoring: Boolean, sessionStartTime: Long, lastGuardedTime: L
             Box(
                 modifier = Modifier
                     .size(6.dp)
-                    .background(if (isMonitoring) NeruppuGreen else TextSecondary, CircleShape)
+                    .background(if (isMonitoring) FaroGreen else TextTertiary, CircleShape)
             )
             Text(
                 if (isMonitoring) stringResource(R.string.dashboard_all_sensors_live) else stringResource(R.string.dashboard_monitoring_off),
-                color = if (isMonitoring) NeruppuGreen else TextSecondary,
+                color = if (isMonitoring) FaroGreen else TextTertiary,
                 style = MaterialTheme.typography.labelMedium
             )
         }
@@ -300,15 +300,15 @@ fun SensorGrid(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SensorCard(
                 icon = Icons.Default.CameraAlt,
-                name = "Motion",
-                value = if (motionLevel < MOTION_THRESHOLD_LOW) "Low" else if (motionLevel < MOTION_THRESHOLD_MEDIUM) "Medium" else "High",
+                name = "Movimento",
+                value = if (motionLevel < MOTION_THRESHOLD_LOW) "Basso" else if (motionLevel < MOTION_THRESHOLD_MEDIUM) "Medio" else "Alto",
                 progress = (motionLevel / 100).toFloat().coerceIn(0f, 1f),
                 color = NeruppuOrange,
                 modifier = Modifier.weight(1f)
             )
             SensorCard(
                 icon = Icons.Default.Mic,
-                name = "Sound",
+                name = "Suono",
                 value = "${audioLevel.toInt()} RMS",
                 progress = (audioLevel / AUDIO_MAX_RMS).coerceIn(0f, 1f),
                 color = NeruppuBlue,
@@ -319,7 +319,7 @@ fun SensorGrid(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SensorCard(
                 icon = Icons.Default.WbSunny,
-                name = "Luminosity",
+                name = "Luce",
                 value = "${lightLevel.toInt()} lx",
                 progress = (lightLevel / LIGHT_MAX_LUX).coerceIn(0f, 1f),
                 color = NeruppuAmber,
@@ -327,10 +327,10 @@ fun SensorGrid(
             )
             SensorCard(
                 icon = Icons.Default.OpenWith,
-                name = "Accelerometer",
-                value = if (accelerometerStable) "Stable" else "Moving",
+                name = "Vibrazioni",
+                value = if (accelerometerStable) "Fermo" else "In movimento",
                 progress = if (accelerometerStable) 0.05f else 0.8f,
-                color = NeruppuGreen,
+                color = FaroGreen,
                 modifier = Modifier.weight(1f)
             )
         }

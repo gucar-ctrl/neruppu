@@ -143,7 +143,7 @@ class TelegramSettingsViewModel @Inject constructor(
         saveConfig()
         // Acknowledge the update so it is not processed again, then confirm on Telegram.
         httpGet("https://api.telegram.org/bot$token/getUpdates?offset=$offset&timeout=0", 10_000)
-        val text = URLEncoder.encode("\u2705 Neruppu collegato! Da ora ricevi qui gli avvisi.", "UTF-8")
+        val text = URLEncoder.encode("\u2705 Faro collegato! Da ora ricevi qui gli avvisi.", "UTF-8")
         httpGet("https://api.telegram.org/bot$token/sendMessage?chat_id=$chatId&text=$text", 15_000)
         _pairingStatus.value = "\u2705 Collegato! Chat ID salvato. Ti ho scritto su Telegram per conferma."
     }
@@ -203,7 +203,7 @@ class TelegramSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, testStatus = null) }
             val payload = AlertPayload.TextAlert(
                 sensorType = SensorType.POWER,
-                message = "This is a test message from Neruppu to verify your connection.",
+                message = "Messaggio di prova di Faro: il collegamento funziona.",
                 timestamp = System.currentTimeMillis()
             )
             val result = alertTransport.send(payload)
@@ -212,7 +212,7 @@ class TelegramSettingsViewModel @Inject constructor(
                     isLoading = false,
                     testStatus = TestStatus(
                         success = result.isSuccess,
-                        error = if (result.isSuccess) "Mock message sent!" else result.exceptionOrNull()?.message
+                        error = if (result.isSuccess) "Messaggio di prova inviato" else result.exceptionOrNull()?.message
                     )
                 )
             }

@@ -13,8 +13,8 @@ android {
         applicationId = "org.havenapp.neruppu"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "26.28"
+        versionCode = 10
+        versionName = "26.47"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

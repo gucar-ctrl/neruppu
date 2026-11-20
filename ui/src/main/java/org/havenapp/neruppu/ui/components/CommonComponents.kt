@@ -121,8 +121,8 @@ fun BigButton(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = backgroundColor ?: (if (secondary) Color.Transparent else NeruppuOrange),
-            contentColor = if (secondary) TextSecondary else Color.White
+            containerColor = backgroundColor ?: (if (secondary) Color.Transparent else FaroAmber),
+            contentColor = if (secondary) (if (backgroundColor != null) TextPrimary else TextTertiary) else FaroNight
         ),
         border = if (secondary) BorderStroke(0.5.dp, BorderTertiary) else null,
         contentPadding = PaddingValues(16.dp)

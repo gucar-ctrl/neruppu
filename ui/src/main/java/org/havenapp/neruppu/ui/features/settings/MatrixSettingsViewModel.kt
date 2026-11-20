@@ -106,7 +106,7 @@ class MatrixSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, testStatus = null) }
             val payload = AlertPayload.TextAlert(
                 sensorType = SensorType.POWER,
-                message = "This is a test message from Neruppu to verify your connection.",
+                message = "Messaggio di prova di Faro: il collegamento funziona.",
                 timestamp = System.currentTimeMillis()
             )
             val result = alertTransport.send(payload)
@@ -115,7 +115,7 @@ class MatrixSettingsViewModel @Inject constructor(
                     isLoading = false,
                     testStatus = TestStatus(
                         success = result.isSuccess,
-                        error = if (result.isSuccess) "Mock message sent!" else result.exceptionOrNull()?.message
+                        error = if (result.isSuccess) "Messaggio di prova inviato" else result.exceptionOrNull()?.message
                     )
                 )
             }

@@ -23,11 +23,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 object AlertMessageFormatter {
-    private val TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss 'del' dd/MM/yyyy")
         .withZone(ZoneId.systemDefault())
 
     fun format(payload: AlertPayload): String {
         val time = TIME_FORMATTER.format(Instant.ofEpochMilli(payload.timestamp))
-        return "[Neruppu] Security Alert: ${payload.message} at $time"
+        return "\uD83D\uDEA8 Faro: ${payload.message}, alle $time.\nSe è un'intrusione, chiama il 112."
     }
 }

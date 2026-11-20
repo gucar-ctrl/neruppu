@@ -35,7 +35,7 @@ class EventNotificationWorker(
         val description = inputData.getString("description") ?: ""
 
         val notification = NotificationCompat.Builder(applicationContext, MonitoringService.CHANNEL_ID)
-            .setContentTitle("Security Event: $eventType")
+            .setContentTitle("Faro: evento rilevato")
             .setContentText(description)
             .setSmallIcon(R.drawable.ic_stat_security)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

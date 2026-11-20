@@ -150,7 +150,7 @@ fun SettingsScreen(
 
     val telegramFields = listOf(
         IntegrationField(
-            label = "Bot Token",
+            label = "Token del bot",
             placeholder = "123456:ABC-DEF...",
             value = telegramUiState.botToken,
             onValueChange = telegramViewModel::onTokenChange,
@@ -166,19 +166,19 @@ fun SettingsScreen(
 
     val matrixFields = listOf(
         IntegrationField(
-            label = "Homeserver URL",
+            label = "URL dell'homeserver",
             placeholder = "https://matrix.org",
             value = matrixUiState.homeserverUrl,
             onValueChange = matrixViewModel::onHomeserverChange
         ),
         IntegrationField(
-            label = "Room ID",
+            label = "ID della stanza",
             placeholder = "!abc123:matrix.org",
             value = matrixUiState.roomId,
             onValueChange = matrixViewModel::onRoomIdChange
         ),
         IntegrationField(
-            label = "Access Token",
+            label = "Token di accesso",
             placeholder = "syt_...",
             value = matrixUiState.accessToken,
             onValueChange = matrixViewModel::onTokenChange,
@@ -196,7 +196,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            ScreenHeader(title = "Settings")
+            ScreenHeader(title = "Opzioni")
 
             Column(
                 modifier = Modifier
@@ -204,32 +204,32 @@ fun SettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(12.dp)
             ) {
-                SectionTitle("Sensors")
+                SectionTitle("Sensori")
                 SettingsList {
                     SettingRow(
                         icon = Icons.Default.CameraAlt,
-                        label = "Motion detection",
-                        subLabel = "CameraX analysis",
+                        label = "Movimento",
+                        subLabel = "Analisi della fotocamera",
                         checked = motionEnabled,
                         onCheckedChange = onMotionToggle
                     )
                     SettingRow(
                         icon = Icons.Default.Mic,
-                        label = "Acoustic monitor",
-                        subLabel = "Mic level tracking",
+                        label = "Rumore",
+                        subLabel = "Livello del microfono",
                         checked = soundEnabled,
                         onCheckedChange = onSoundToggle
                     )
                     SettingRow(
                         icon = Icons.Default.WbSunny,
-                        label = "Luminosity",
-                        subLabel = "Ambient light sensor",
+                        label = "Luce",
+                        subLabel = "Sensore di luce ambientale",
                         checked = lightEnabled,
                         onCheckedChange = onLightToggle
                     )
                 }
 
-                SectionTitle("Sensitivity")
+                SectionTitle("Sensibilità")
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -238,15 +238,15 @@ fun SettingsScreen(
                         .padding(12.dp)
                 ) {
                     SliderWrap(
-                        label = "Motion threshold",
+                        label = "Soglia di movimento",
                         value = motionSensitivity,
                         onValueChange = onMotionSensitivityChange,
-                        displayValue = if (motionSensitivity < 0.3f) "Low" else if (motionSensitivity < 0.7f) "Medium" else "High",
+                        displayValue = if (motionSensitivity < 0.3f) "Bassa" else if (motionSensitivity < 0.7f) "Media" else "Alta",
                         color = NeruppuOrange
                     )
                     Spacer(modifier = Modifier.height(14.dp))
                     SliderWrap(
-                        label = "Sound threshold",
+                        label = "Soglia del suono",
                         value = soundThreshold,
                         onValueChange = onSoundThresholdChange,
                         displayValue = "${(soundThreshold * 100).toInt()} dB",
@@ -254,19 +254,19 @@ fun SettingsScreen(
                     )
                 }
 
-                SectionTitle("Notifications")
+                SectionTitle("Notifiche")
                 SettingsList {
                     SettingRow(
                         icon = Icons.Default.Notifications,
-                        label = "Push alerts",
-                        subLabel = "On every event",
+                        label = "Notifiche sul telefono",
+                        subLabel = "A ogni evento",
                         checked = pushAlerts,
                         onCheckedChange = onPushAlertsToggle
                     )
                     SettingRow(
                         icon = Icons.Default.Photo,
-                        label = "Save photos",
-                        subLabel = "On motion trigger",
+                        label = "Salva le foto",
+                        subLabel = "Quando rileva un movimento",
                         checked = savePhotos,
                         onCheckedChange = onSavePhotosToggle
                     )
@@ -275,7 +275,7 @@ fun SettingsScreen(
                 SectionTitle("Telegram: media e comandi")
                 TelegramExtrasSection()
 
-                SectionTitle("Log deletion")
+                SectionTitle("Cancellazione degli eventi")
                 DeletePasswordManagementRow(
                     hasPassword = deletePasswordUiState.hasPassword,
                     onSetClick = { showSetupPasswordDialog = true },
@@ -283,17 +283,17 @@ fun SettingsScreen(
                     onRemoveClick = { showRemovePasswordDialog = true }
                 )
 
-                SectionTitle("Integrations")
+                SectionTitle("Collegamenti")
                 SettingsList {
                     IntegrationSettingRow(
                         icon = Icons.Default.Send,
-                        label = "Telegram Alerts",
+                        label = "Avvisi Telegram",
                         isConfigured = telegramUiState.isSaved,
                         onClick = { showTelegramConfig = true }
                     )
                     IntegrationSettingRow(
                         icon = Icons.Default.Message,
-                        label = "Matrix Alerts",
+                        label = "Avvisi Matrix",
                         isConfigured = matrixUiState.isSaved,
                         onClick = { showMatrixConfig = true }
                     )
@@ -303,23 +303,23 @@ fun SettingsScreen(
     }
 
     PasswordManagementDialog(
-        title = "Set delete password",
-        description = "This password is required every time logs and media are cleared.",
+        title = "Imposta la password di cancellazione",
+        description = "Serve ogni volta che cancelli eventi e file.",
         fields = listOf(
             PasswordField(
-                label = "New password",
+                label = "Nuova password",
                 value = setupNewPassword,
                 onValueChange = { setupNewPassword = it },
                 isPassword = true
             ),
             PasswordField(
-                label = "Confirm password",
+                label = "Conferma la password",
                 value = setupConfirmPassword,
                 onValueChange = { setupConfirmPassword = it },
                 isPassword = true
             )
         ),
-        confirmText = "Set password",
+        confirmText = "Imposta",
         isVisible = showSetupPasswordDialog,
         onConfirm = {
             deletePasswordViewModel.setPassword(setupNewPassword, setupConfirmPassword) {
@@ -336,29 +336,29 @@ fun SettingsScreen(
     )
 
     PasswordManagementDialog(
-        title = "Change delete password",
-        description = "Enter the current password, then set the new password.",
+        title = "Cambia la password di cancellazione",
+        description = "Inserisci la password attuale, poi quella nuova.",
         fields = listOf(
             PasswordField(
-                label = "Current password",
+                label = "Password attuale",
                 value = changeCurrentPassword,
                 onValueChange = { changeCurrentPassword = it },
                 isPassword = true
             ),
             PasswordField(
-                label = "New password",
+                label = "Nuova password",
                 value = changeNewPassword,
                 onValueChange = { changeNewPassword = it },
                 isPassword = true
             ),
             PasswordField(
-                label = "Confirm password",
+                label = "Conferma la password",
                 value = changeConfirmPassword,
                 onValueChange = { changeConfirmPassword = it },
                 isPassword = true
             )
         ),
-        confirmText = "Change password",
+        confirmText = "Cambia",
         isVisible = showChangePasswordDialog,
         onConfirm = {
             deletePasswordViewModel.changePassword(changeCurrentPassword, changeNewPassword, changeConfirmPassword) {
@@ -377,17 +377,17 @@ fun SettingsScreen(
     )
 
     PasswordManagementDialog(
-        title = "Remove delete password",
-        description = "Removing this password will block log and media deletion until a new password is set.",
+        title = "Rimuovi la password di cancellazione",
+        description = "Senza password non potrai cancellare eventi e file finché non ne imposti una nuova.",
         fields = listOf(
             PasswordField(
-                label = "Current password",
+                label = "Password attuale",
                 value = removeCurrentPassword,
                 onValueChange = { removeCurrentPassword = it },
                 isPassword = true
             )
         ),
-        confirmText = "Remove password",
+        confirmText = "Rimuovi la password",
         isVisible = showRemovePasswordDialog,
         onConfirm = {
             deletePasswordViewModel.removePassword(removeCurrentPassword) {
@@ -408,7 +408,7 @@ fun SettingsScreen(
         uiState = telegramUiState,
         actions = telegramViewModel,
         fields = telegramFields,
-        descriptionText = "Provide Telegram bot credentials to receive real-time alerts. Use @BotFather to create a bot.",
+        descriptionText = "Inserisci i dati del bot Telegram per ricevere gli avvisi. Il bot si crea con @BotFather.",
         extraContent = { TelegramQrPairing(telegramViewModel) }
     )
 
@@ -419,7 +419,7 @@ fun SettingsScreen(
         uiState = matrixUiState,
         actions = matrixViewModel,
         fields = matrixFields,
-        descriptionText = "Provide Matrix credentials to receive real-time alerts on other devices."
+        descriptionText = "Inserisci i dati Matrix per ricevere gli avvisi su altri dispositivi."
     )
 }
 
@@ -448,13 +448,13 @@ fun DeletePasswordManagementRow(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "Delete password",
+                "Password di cancellazione",
                 color = TextPrimary,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )
             Text(
-                if (hasPassword) "Required before clearing events and media" else "Set a password to enable clearing",
+                if (hasPassword) "Richiesta prima di cancellare eventi e file" else "Imposta una password per poter cancellare",
                 color = TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -474,7 +474,7 @@ fun DeletePasswordManagementRow(
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = NeruppuOrange)
         ) {
-            Text("Set", fontWeight = FontWeight.SemiBold)
+            Text("Imposta", fontWeight = FontWeight.SemiBold)
         }
         Button(
             onClick = onChangeClick,
@@ -483,7 +483,7 @@ fun DeletePasswordManagementRow(
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = NeruppuBlue)
         ) {
-            Text("Change", fontWeight = FontWeight.SemiBold)
+            Text("Cambia", fontWeight = FontWeight.SemiBold)
         }
         OutlinedButton(
             onClick = onRemoveClick,
@@ -493,7 +493,7 @@ fun DeletePasswordManagementRow(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = NeruppuRed),
             border = androidx.compose.foundation.BorderStroke(1.dp, if (hasPassword) NeruppuRed else BorderTertiary)
         ) {
-            Text("Remove", fontWeight = FontWeight.SemiBold)
+            Text("Rimuovi", fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -560,7 +560,7 @@ fun PasswordManagementDialog(
                 onClick = onConfirm,
                 enabled = fields.all { it.value.isNotBlank() },
                 shape = RoundedCornerShape(8.dp),
-                colors = if (confirmText == "Remove password") {
+                colors = if (confirmText == "Rimuovi la password") {
                     ButtonDefaults.buttonColors(containerColor = NeruppuRed)
                 } else {
                     ButtonDefaults.buttonColors(containerColor = NeruppuOrange)
@@ -571,7 +571,7 @@ fun PasswordManagementDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = TextSecondary)
+                Text("Annulla", color = TextSecondary)
             }
         },
         containerColor = Color.White,
@@ -605,7 +605,7 @@ fun IntegrationSettingRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             Text(
-                if (isConfigured) "Configured" else "Not configured",
+                if (isConfigured) "Configurato" else "Non configurato",
                 color = if (isConfigured) NeruppuGreen else TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -678,9 +678,9 @@ fun TelegramExtrasSection() {
         Text("Risoluzione foto", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         PrefRadioGroup(
             options = listOf(
-                "hd" to "HD 1280x720 (leggera, piu veloce)",
+                "hd" to "HD 1280x720 (leggera, più veloce)",
                 "fhd" to "Full HD 1920x1080",
-                "max" to "Massima del sensore (file grandi, piu lenta)"
+                "max" to "Massima del sensore (file grandi, più lenta)"
             ),
             selected = photoRes,
             onSelect = {
@@ -690,7 +690,7 @@ fun TelegramExtrasSection() {
         )
 
         Spacer(modifier = Modifier.height(12.dp))
-        Text("Qualita video", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Text("Qualità video", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         PrefRadioGroup(
             options = listOf(
                 "sd" to "SD 480p (file piccoli, invio rapido)",
@@ -704,7 +704,7 @@ fun TelegramExtrasSection() {
             }
         )
         Text(
-            "Se il telefono non supporta la risoluzione scelta usa la piu vicina disponibile. " +
+            "Se il telefono non supporta la risoluzione scelta usa la più vicina disponibile. " +
                 "Quella effettiva si vede con il comando /stato.",
             color = TextSecondary,
             style = MaterialTheme.typography.bodySmall
@@ -736,7 +736,7 @@ fun TelegramExtrasSection() {
     SettingRow(
         icon = Icons.Default.Send,
         label = "Comandi da Telegram",
-        subLabel = "/attiva /disattiva /stato /foto /live /stop",
+        subLabel = "/attiva /disattiva /stato /foto /live /stop /invita",
         checked = remote,
         onCheckedChange = {
             remote = it

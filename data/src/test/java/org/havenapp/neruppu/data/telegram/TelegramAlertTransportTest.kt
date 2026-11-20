@@ -43,6 +43,10 @@ class TelegramAlertTransportTest {
     fun setup() {
         transport = TelegramAlertTransport(apiClient, configStore)
         every { configStore.isComplete } returns true
+        // Every alert goes out through broadcast(): run the send lambda once, for the owner's chat.
+        coEvery { apiClient.broadcast(any()) } coAnswers {
+            firstArg<suspend (String) -> Result<Unit>>().invoke(OWNER)
+        }
     }
 
     @After
@@ -53,11 +57,11 @@ class TelegramAlertTransportTest {
     @Test
     fun `TC-TG-01 Text alert is sent correctly`() = runBlocking {
         val payload = AlertPayload.TextAlert(SensorType.CAMERA_MOTION, "Motion detected", 1000L)
-        coEvery { apiClient.sendMessage(any()) } returns Result.success(Unit)
+        coEvery { apiClient.sendMessage(any(), any()) } returns Result.success(Unit)
 
         transport.send(payload)
 
-        coVerify { apiClient.sendMessage(match { it.contains("Security Alert") && it.contains("Motion detected") }) }
+        coVerify { apiClient.sendMessage(match { it.contains("Faro") && it.contains("Motion detected") }, OWNER) }
     }
 
     @Test
@@ -72,12 +76,12 @@ class TelegramAlertTransportTest {
             1000L
         )
         
-        coEvery { apiClient.sendVoice(any(), any()) } returns Result.success(Unit)
+        coEvery { apiClient.sendVoice(any(), any(), any()) } returns Result.success(Unit)
 
         transport.send(payload)
 
-        coVerify { apiClient.sendVoice(byteArrayOf(1, 2, 3), any()) }
-        coVerify(exactly = 0) { apiClient.sendPhoto(any(), any()) }
+        coVerify { apiClient.sendVoice(byteArrayOf(1, 2, 3), any(), OWNER) }
+        coVerify(exactly = 0) { apiClient.sendPhoto(any(), any(), any()) }
     }
 
     @Test
@@ -88,6 +92,11 @@ class TelegramAlertTransportTest {
         val result = transport.send(payload)
 
         assertTrue(result.isSuccess)
-        coVerify(exactly = 0) { apiClient.sendMessage(any()) }
+        coVerify(exactly = 0) { apiClient.sendMessage(any(), any()) }
+        coVerify(exactly = 0) { apiClient.broadcast(any()) }
+    }
+
+    private companion object {
+        const val OWNER = "42"
     }
 }

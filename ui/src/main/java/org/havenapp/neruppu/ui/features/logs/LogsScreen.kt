@@ -108,7 +108,7 @@ fun LogsScreen(
         val message = deleteState.deleteMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(
             message = when (message) {
-                LogsDeleteMessage.Success -> "Events and media cleared"
+                LogsDeleteMessage.Success -> "Eventi e file cancellati"
                 is LogsDeleteMessage.Error -> message.text
             },
             duration = SnackbarDuration.Short
@@ -126,11 +126,11 @@ fun LogsScreen(
                 .fillMaxSize()
                 .padding(bottom = 4.dp)
         ) {
-            ScreenHeader(title = "Events") {
+            ScreenHeader(title = "Eventi") {
                 IconButton(onClick = { showDeleteDialog = true }) {
                     Icon(
                         Icons.Default.DeleteSweep,
-                        contentDescription = "Clear all",
+                        contentDescription = "Cancella tutto",
                         tint = TextSecondary,
                         modifier = Modifier.size(24.dp)
                     )
@@ -172,10 +172,10 @@ fun LogsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                EventTag("All", active = selectedFilter == "All", onClick = { viewModel.setFilter("All") })
-                EventTag("Motion", active = selectedFilter == "Motion", onClick = { viewModel.setFilter("Motion") })
-                EventTag("Sound", active = selectedFilter == "Sound", onClick = { viewModel.setFilter("Sound") })
-                EventTag("Light", active = selectedFilter == "Light", onClick = { viewModel.setFilter("Light") })
+                EventTag("Tutti", active = selectedFilter == "All", onClick = { viewModel.setFilter("All") })
+                EventTag("Movimento", active = selectedFilter == "Motion", onClick = { viewModel.setFilter("Motion") })
+                EventTag("Suono", active = selectedFilter == "Sound", onClick = { viewModel.setFilter("Sound") })
+                EventTag("Luce", active = selectedFilter == "Light", onClick = { viewModel.setFilter("Light") })
             }
 
             LazyColumn(
@@ -215,14 +215,14 @@ fun LogsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(24.dp))
                                 Text(
-                                    "No events recorded",
+                                    "Nessun evento registrato",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = TextPrimary,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "When sensors are triggered during monitoring, events will be listed here.",
+                                    "Quando un sensore scatta durante la sorveglianza, l'evento compare qui.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -263,7 +263,7 @@ fun EventTag(text: String, active: Boolean = false, onClick: () -> Unit) {
 @Composable
 fun EventItem(event: Event) {
     var expanded by remember { mutableStateOf(false) }
-    val timeFormatter = DateTimeFormatter.ofPattern("hh:mm a").withZone(ZoneId.systemDefault())
+    val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
     val (color, icon) = when (event.sensorType) {
         SensorType.CAMERA_MOTION -> NeruppuOrange to Icons.Default.CameraAlt
         SensorType.MICROPHONE -> NeruppuBlue to Icons.Default.Mic
@@ -304,9 +304,9 @@ fun EventItem(event: Event) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = when(event.sensorType) {
-                        SensorType.CAMERA_MOTION -> "Motion detected"
-                        SensorType.MICROPHONE -> "Loud noise burst"
-                        SensorType.LIGHT -> "Light change"
+                        SensorType.CAMERA_MOTION -> "Movimento rilevato"
+                        SensorType.MICROPHONE -> "Rumore forte"
+                        SensorType.LIGHT -> "Cambio di luce"
                         else -> event.sensorType.name
                     },
                     color = TextPrimary,
@@ -352,7 +352,7 @@ fun EventItem(event: Event) {
             if (mediaExists && event.mediaUri != null) {
                 Image(
                     painter = rememberAsyncImagePainter(event.mediaUri),
-                    contentDescription = "Event Photo",
+                    contentDescription = "Foto dell'evento",
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(200.dp)
@@ -362,7 +362,7 @@ fun EventItem(event: Event) {
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             } else if (event.mediaUri != null && event.uploadStatus == UploadStatus.UPLOADED && !mediaExists) {
-                DeletedMediaPlaceholder("Image uploaded and deleted locally")
+                DeletedMediaPlaceholder("Foto inviata e cancellata dal telefono")
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
@@ -370,7 +370,7 @@ fun EventItem(event: Event) {
                 AudioPlayer(uriString = event.audioUri!!)
                 Spacer(modifier = Modifier.height(12.dp))
             } else if (event.audioUri != null && event.uploadStatus == UploadStatus.UPLOADED && !audioExists) {
-                DeletedMediaPlaceholder("Audio uploaded and deleted locally")
+                DeletedMediaPlaceholder("Audio inviato e cancellato dal telefono")
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
@@ -380,10 +380,10 @@ fun EventItem(event: Event) {
             }
 
             val detailMeta = when(event.sensorType) {
-                SensorType.CAMERA_MOTION -> "High confidence motion detected via CameraX analysis."
-                SensorType.MICROPHONE -> "Sound level exceeded threshold."
-                SensorType.LIGHT -> "Ambient light shifted significantly."
-                else -> "Sensor trigger event."
+                SensorType.CAMERA_MOTION -> "Movimento rilevato dall'analisi della fotocamera."
+                SensorType.MICROPHONE -> "Il livello del suono ha superato la soglia."
+                SensorType.LIGHT -> "La luce ambientale è cambiata molto."
+                else -> "Evento rilevato da un sensore."
             }
             Text(detailMeta, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
 
@@ -393,7 +393,7 @@ fun EventItem(event: Event) {
                         if (event.mediaUri != null) {
                             Icon(Icons.Default.Image, null, modifier = Modifier.size(14.dp), tint = NeruppuOrange)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Photo", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Text("Foto", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                         }
                         if (event.audioUri != null) {
                             Icon(Icons.Default.AudioFile, null, modifier = Modifier.size(14.dp), tint = NeruppuBlue)
@@ -407,14 +407,14 @@ fun EventItem(event: Event) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Schedule, null, modifier = Modifier.size(14.dp), tint = NeruppuAmber)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pending upload", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Text("Invio in attesa", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     UploadStatus.UPLOADED -> {
                         val targetText = when (event.uploadTarget) {
-                            "TELEGRAM" -> "Uploaded to Telegram"
-                            "MATRIX" -> "Uploaded to Matrix"
-                            else -> "Uploaded"
+                            "TELEGRAM" -> "Inviato su Telegram"
+                            "MATRIX" -> "Inviato su Matrix"
+                            else -> "Inviato"
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.CloudDone, null, modifier = Modifier.size(14.dp), tint = NeruppuGreen)
@@ -426,7 +426,7 @@ fun EventItem(event: Event) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Error, null, modifier = Modifier.size(14.dp), tint = NeruppuRed)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Upload failed", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Text("Invio non riuscito", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -472,7 +472,7 @@ fun AudioPlayer(uriString: String) {
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = Color(0xFFF0F0F0),
+                color = BackgroundSecondary,
                 shape = RoundedCornerShape(24.dp)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -541,7 +541,7 @@ fun AudioPlayer(uriString: String) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = null,
-                tint = Color(0xFF555555),
+                tint = TextSecondary,
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -558,9 +558,9 @@ fun AudioPlayer(uriString: String) {
                 valueRange = 0f..(if (duration > 0) duration.toFloat() else 1f),
                 modifier = Modifier.fillMaxWidth().height(32.dp),
                 colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF075E54),
-                    activeTrackColor = Color(0xFF075E54),
-                    inactiveTrackColor = Color(0xFFCCCCCC)
+                    thumbColor = NeruppuOrange,
+                    activeTrackColor = NeruppuOrange,
+                    inactiveTrackColor = BorderTertiary
                 )
             )
         }
@@ -570,7 +570,7 @@ fun AudioPlayer(uriString: String) {
         Text(
             text = formatTime(if (isPlaying) currentPosition else duration),
             fontSize = 11.sp,
-            color = Color(0xFF666666),
+            color = TextSecondary,
             modifier = Modifier.padding(end = 8.dp)
         )
     }
@@ -592,7 +592,7 @@ fun DeleteConfirmationDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                "Clear all events and media?",
+                "Cancellare tutti gli eventi e i file?",
                 style = MaterialTheme.typography.headlineSmall,
                 color = TextPrimary
             )
@@ -600,12 +600,12 @@ fun DeleteConfirmationDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "This will permanently remove all recorded security events and their media files from this device.",
+                    "Eventi, foto e audio registrati verranno cancellati da questo telefono. Non si può annullare.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
                 Text(
-                    "A configured delete password must be verified before anything is removed.",
+                    "Prima di cancellare devi inserire la password di cancellazione.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextPrimary
                 )
@@ -617,12 +617,12 @@ fun DeleteConfirmationDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = NeruppuRed),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("Continue", fontWeight = FontWeight.Bold)
+                Text("Continua", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = TextSecondary)
+                Text("Annulla", color = TextSecondary)
             }
         },
         containerColor = Color.White,
@@ -642,7 +642,7 @@ fun DeletePasswordDialog(
         onDismissRequest = if (isLoading) { {} } else onDismiss,
         title = {
             Text(
-                "Verify delete password",
+                "Verifica la password di cancellazione",
                 style = MaterialTheme.typography.headlineSmall,
                 color = TextPrimary
             )
@@ -650,14 +650,14 @@ fun DeletePasswordDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Enter the delete password to remove all events and media files.",
+                    "Inserisci la password per cancellare eventi e file.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
                 OutlinedTextField(
                     value = password,
                     onValueChange = onPasswordChange,
-                    label = { Text("Delete password", color = TextSecondary) },
+                    label = { Text("Password di cancellazione", color = TextSecondary) },
                     singleLine = true,
                     enabled = !isLoading,
                     visualTransformation = PasswordVisualTransformation(),
@@ -690,7 +690,7 @@ fun DeletePasswordDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text("Clear All", fontWeight = FontWeight.Bold)
+                Text("Cancella tutto", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -698,7 +698,7 @@ fun DeletePasswordDialog(
                 onClick = onDismiss,
                 enabled = !isLoading
             ) {
-                Text("Cancel", color = TextSecondary)
+                Text("Annulla", color = TextSecondary)
             }
         },
         containerColor = Color.White,
@@ -730,7 +730,7 @@ fun DeletedMediaPlaceholder(text: String) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
+            .background(BackgroundSecondary, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Icon(

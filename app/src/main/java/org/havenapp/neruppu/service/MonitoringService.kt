@@ -448,7 +448,7 @@ class MonitoringService : LifecycleService() {
             "TRIGGER_MOTION_EVENT" -> {
                 val level = intent.getDoubleExtra("motion_level", 0.0)
                 serviceScope.launch {
-                    handleEvent(SensorType.CAMERA_MOTION, "Camera motion detected: Level ${String.format("%.2f", level)}")
+                    handleEvent(SensorType.CAMERA_MOTION, "Movimento rilevato dalla fotocamera (livello ${String.format("%.2f", level)})")
                 }
             }
         }
@@ -526,7 +526,7 @@ class MonitoringService : LifecycleService() {
                     if (_isMonitoring.value && level > 15.0) {
                         Log.v("MonitoringService", "THRESHOLD EXCEEDED: $level")
                         serviceScope.launch {
-                            handleEvent(SensorType.CAMERA_MOTION, "Camera motion detected: Level ${String.format("%.2f", level)}")
+                            handleEvent(SensorType.CAMERA_MOTION, "Movimento rilevato dalla fotocamera (livello ${String.format("%.2f", level)})")
                         }
                     }
                 }
@@ -558,7 +558,7 @@ class MonitoringService : LifecycleService() {
                         Log.v("MonitoringService", "Motion event received")
                         if (_isMonitoring.value) {
                             serviceScope.launch {
-                                handleEvent(SensorType.ACCELEROMETER, "Physical motion detected: Magnitude $magnitude")
+                                handleEvent(SensorType.ACCELEROMETER, "Vibrazione rilevata (intensità $magnitude)")
                             }
                         }
                     }
@@ -570,7 +570,7 @@ class MonitoringService : LifecycleService() {
                         Log.v("MonitoringService", "Light event received")
                         if (_isMonitoring.value) {
                             serviceScope.launch {
-                                handleEvent(SensorType.LIGHT, "Light change detected: $lux lux")
+                                handleEvent(SensorType.LIGHT, "Cambio di luce rilevato ($lux lux)")
                             }
                         }
                     }
@@ -582,7 +582,7 @@ class MonitoringService : LifecycleService() {
                 launch {
                     significantMotionDriver.observeSignificantMotion().collect {
                         if (_isMonitoring.value) {
-                            handleEvent(SensorType.ACCELEROMETER, "Significant motion detected (hardware trigger)")
+                            handleEvent(SensorType.ACCELEROMETER, "Il telefono è stato mosso")
                         }
                     }
                 }
@@ -645,7 +645,7 @@ class MonitoringService : LifecycleService() {
                         isRecordingAudio.compareAndSet(false, true)) {
                         Log.i("MonitoringService", "AUDIO TRIGGER (SPIKE): $spike (Threshold: $threshold, Fast: $fastBaseline, Slow: $slowBaseline)")
                         serviceScope.launch {
-                            val eventId = handleEvent(SensorType.MICROPHONE, "Acoustic spike detected: ${spike.toInt()}")
+                            val eventId = handleEvent(SensorType.MICROPHONE, "Rumore rilevato (livello ${spike.toInt()})")
                             if (eventId == -1L) {
                                 // Alert paused, or the event could not be saved: nothing to record.
                                 isRecordingAudio.set(false)
@@ -846,7 +846,7 @@ class MonitoringService : LifecycleService() {
         if (clipModePref == CLIP_VIDEO && cameraManager.canRecordVideo) {
             val clip = cameraManager.recordClip(CLIP_DURATION_MS)
             if (clip != null) {
-                telegramApiClient.sendVideo(clip, "\uD83C\uDFA5 Video 10 s dopo il rilevamento ($label)")
+                telegramApiClient.broadcast { telegramApiClient.sendVideo(clip, "\uD83C\uDFA5 Video 10 s dopo il rilevamento ($label)", it) }
                     .onFailure { Log.e("MonitoringService", "sendVideo failed", it) }
                 clip.delete()
                 return
@@ -863,8 +863,12 @@ class MonitoringService : LifecycleService() {
             readAndDeleteCapture()?.let { photos.add(it) }
         }
         when {
-            photos.size >= 2 -> telegramApiClient.sendMediaGroup(photos, "\uD83D\uDCF8 Sequenza di 10 s dopo il rilevamento ($label)")
-            photos.size == 1 -> telegramApiClient.sendPhoto(photos[0], "\uD83D\uDCF8 Foto successiva ($label)")
+            photos.size >= 2 -> telegramApiClient.broadcast {
+                telegramApiClient.sendMediaGroup(photos, "\uD83D\uDCF8 Sequenza di 10 s dopo il rilevamento ($label)", it)
+            }
+            photos.size == 1 -> telegramApiClient.broadcast {
+                telegramApiClient.sendPhoto(photos[0], "\uD83D\uDCF8 Foto successiva ($label)", it)
+            }
             else -> Result.success(Unit)
         }.onFailure { Log.e("MonitoringService", "Photo burst send failed", it) }
     }
@@ -977,8 +981,14 @@ class MonitoringService : LifecycleService() {
 
     private suspend fun pollTelegramCommands() {
         Log.i("MonitoringService", "Telegram remote control started")
-        telegramApiClient.setMyCommands(BOT_COMMANDS)
-            .onFailure { Log.w("MonitoringService", "setMyCommands failed: ${it.message}") }
+        val ownerScope = ownerCommandScope()
+        val ownerMenu = telegramApiClient.setMyCommands(BOT_COMMANDS, ownerScope)
+        val menuResult = if (ownerScope != null && ownerMenu.isSuccess) {
+            telegramApiClient.setMyCommands(GUEST_COMMANDS)
+        } else {
+            telegramApiClient.setMyCommands(BOT_COMMANDS)
+        }
+        menuResult.onFailure { Log.w("MonitoringService", "setMyCommands failed: ${it.message}") }
         var offset = 0L
         val ignoreBefore = System.currentTimeMillis() / 1000 - 10
         while (currentCoroutineContext().isActive) {
@@ -994,9 +1004,13 @@ class MonitoringService : LifecycleService() {
                     offset = maxOf(offset, update.getLong("update_id") + 1)
                     val msg = update.optJSONObject("message") ?: continue
                     val chatId = msg.optJSONObject("chat")?.optLong("id") ?: continue
-                    // Only the configured chat may control the device; stale commands are ignored.
-                    if (chatId.toString() != telegramConfigStore.chatId.trim()) continue
                     if (msg.optLong("date") < ignoreBefore) continue
+                    // Only the configured chat may control the device. Other chats can only
+                    // accept an invite or leave the list of people who receive the alerts.
+                    if (chatId.toString() != telegramConfigStore.chatId.trim()) {
+                        handleGuestMessage(msg, chatId.toString())
+                        continue
+                    }
                     handleRemoteCommand(msg.optString("text"))
                 }
             } catch (e: Exception) {
@@ -1048,7 +1062,104 @@ class MonitoringService : LifecycleService() {
                         ", nessun nuovo avviso per $alertPausePref s."
                 )
             }
-            else -> reply(HELP_TEXT)
+            "/invita", "/invite" -> sendInvite()
+            "/persone", "/people" -> reply(peopleText())
+            else -> {
+                if (cmd.startsWith("/rimuovi_")) removePerson(cmd.removePrefix("/rimuovi_")) else reply(HELP_TEXT)
+            }
+        }
+    }
+
+    private fun ownerCommandScope(): String? {
+        val id = telegramConfigStore.chatId.trim().toLongOrNull() ?: return null
+        return JSONObject().put("type", "chat").put("chat_id", id).toString()
+    }
+
+    /** /invita: a t.me link that adds one person to the alerts. Valid once, for 24 hours. */
+    private suspend fun sendInvite() {
+        val username = telegramApiClient.getBotUsername().getOrElse {
+            reply("Non riesco a leggere il nome del bot. Riprova tra poco.")
+            return
+        }
+        val code = telegramConfigStore.newInviteCode()
+        reply(
+            "Link d'invito (vale una volta e scade tra 24 ore):\n" +
+                "https://t.me/$username?start=$code\n\n" +
+                "Mandalo alla persona: lo apre, preme Avvia e da quel momento riceve foto e video degli avvisi. " +
+                "Non può dare comandi."
+        )
+    }
+
+    private fun peopleText(): String {
+        val people = telegramConfigStore.extraRecipients
+        if (people.isEmpty()) return "Gli avvisi arrivano solo a te. Con /invita aggiungi una persona."
+        return buildString {
+            appendLine("Ricevono gli avvisi:")
+            appendLine("\u2022 Tu")
+            people.forEach { (id, name) -> appendLine("\u2022 $name  /rimuovi_$id") }
+            append("Tocca il comando accanto al nome per togliere quella persona. Con /invita ne aggiungi un'altra.")
+        }
+    }
+
+    private suspend fun removePerson(id: String) {
+        val name = telegramConfigStore.removeRecipient(id)
+        if (name == null) {
+            reply("Questa persona non è nell'elenco. /persone mostra chi riceve gli avvisi.")
+            return
+        }
+        telegramApiClient.sendPlainMessage("Non ricevi più gli avvisi di Faro.", id)
+        reply("$name non riceve più gli avvisi.")
+    }
+
+    /** Messages from chats other than the owner's: invite links and /esci only. */
+    private suspend fun handleGuestMessage(msg: JSONObject, chatId: String) {
+        val chat = msg.optJSONObject("chat") ?: return
+        if (chat.optString("type") != "private") return
+        val text = msg.optString("text").trim()
+        val cmd = text.lowercase(Locale.ROOT).substringBefore(' ').substringBefore('@')
+        val isRecipient = telegramConfigStore.extraRecipients.any { it.first == chatId }
+        when {
+            cmd == "/start" && text.contains(' ') -> {
+                if (isRecipient) {
+                    telegramApiClient.sendPlainMessage("Ricevi già gli avvisi di Faro. Per smettere scrivi /esci.", chatId)
+                } else if (telegramConfigStore.consumeInviteCode(text.substringAfter(' '))) {
+                    val name = guestName(msg, chat)
+                    telegramConfigStore.addRecipient(chatId, name)
+                    telegramApiClient.sendPlainMessage(
+                        "\u2705 Da ora ricevi gli avvisi di Faro: una foto e poi un video o una sequenza di foto quando rileva qualcosa.\n" +
+                            "Se è un'intrusione, chiama il 112.\nPer smettere scrivi /esci.",
+                        chatId
+                    )
+                    reply("\u2705 $name ora riceve gli avvisi. /persone mostra chi li riceve.")
+                } else {
+                    telegramApiClient.sendPlainMessage(
+                        "Questo invito non è valido o è scaduto. Chiedine uno nuovo a chi te l'ha mandato.",
+                        chatId
+                    )
+                }
+            }
+            cmd == "/esci" && isRecipient -> {
+                val name = telegramConfigStore.removeRecipient(chatId)
+                telegramApiClient.sendPlainMessage("Non ricevi più gli avvisi di Faro.", chatId)
+                if (name != null) reply("$name ha scritto /esci e non riceve più gli avvisi.")
+            }
+            isRecipient -> {
+                telegramApiClient.sendPlainMessage("Qui ricevi solo gli avvisi. Per smettere scrivi /esci.", chatId)
+            }
+        }
+    }
+
+    private fun guestName(msg: JSONObject, chat: JSONObject): String {
+        val from = msg.optJSONObject("from") ?: chat
+        val full = listOf(from.optString("first_name"), from.optString("last_name"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+        val username = from.optString("username").trim()
+        return when {
+            full.isNotEmpty() -> full
+            username.isNotEmpty() -> "@$username"
+            else -> "Senza nome"
         }
     }
 
@@ -1071,6 +1182,14 @@ class MonitoringService : LifecycleService() {
             appendLine("Batteria: $level%" + if (charging) " (in carica)" else " (NON in carica)")
             appendLine("Invio dopo rilevamento: $mode")
             appendLine("Pausa tra gli avvisi: $alertPausePref s")
+            val others = telegramConfigStore.extraRecipients.size
+            appendLine(
+                "Ricevono gli avvisi: " + when (others) {
+                    0 -> "solo tu"
+                    1 -> "tu e un'altra persona (/persone)"
+                    else -> "tu e altre $others persone (/persone)"
+                }
+            )
             if (liveJob?.isActive == true) appendLine("Live in corso (/stop per fermarlo)")
             append("Risoluzione foto: ${cameraManager.actualPhotoResolution ?: "fotocamera spenta"}")
             cameraManager.actualVideoResolution?.let { append("\nRisoluzione video: $it") }
@@ -1208,19 +1327,19 @@ class MonitoringService : LifecycleService() {
         )
 
         val contentText = if (_isMonitoring.value) {
-            "System is active and monitoring sensors"
+            "Sorveglianza attiva"
         } else if (remoteControlPref) {
-            "Idle - waiting for Telegram commands"
+            "Spento, in attesa di comandi da Telegram"
         } else {
-            "System is idle. Tap START to begin monitoring."
+            "Spento. Apri Faro per attivare la sorveglianza."
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Neruppu Security")
+            .setContentTitle("Faro")
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_stat_security)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Service", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Chiudi Faro", stopPendingIntent)
             .build()
     }
 
@@ -1262,7 +1381,13 @@ class MonitoringService : LifecycleService() {
             "stato" to "Stato, batteria e impostazioni",
             "foto" to "Scatta una foto adesso",
             "live" to "Foto che si aggiorna ogni pochi secondi",
-            "stop" to "Ferma il live e gli invii in corso"
+            "stop" to "Ferma il live e gli invii in corso",
+            "invita" to "Link per far ricevere gli avvisi a un'altra persona",
+            "persone" to "Chi riceve gli avvisi"
+        )
+        /** Menu shown to invited people: they can only leave. */
+        val GUEST_COMMANDS = listOf(
+            "esci" to "Smetti di ricevere gli avvisi"
         )
         const val HELP_TEXT = "Comandi disponibili:\n" +
             "/attiva - accende il monitoraggio\n" +
@@ -1270,6 +1395,8 @@ class MonitoringService : LifecycleService() {
             "/stato - stato e batteria\n" +
             "/foto - scatta una foto adesso\n" +
             "/live [minuti] - foto che si aggiorna ogni pochi secondi (2 min di default, massimo 10)\n" +
-            "/stop - ferma il live e gli invii in corso"
+            "/stop - ferma il live e gli invii in corso\n" +
+            "/invita - link per far ricevere gli avvisi a un'altra persona\n" +
+            "/persone - chi riceve gli avvisi (e come togliere qualcuno)"
     }
 }

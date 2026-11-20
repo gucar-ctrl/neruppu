@@ -51,17 +51,17 @@ class DeletePasswordSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null, successMessage = null) }
             if (newPassword != confirmPassword) {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Passwords do not match") }
+                _uiState.update { it.copy(isLoading = false, errorMessage = "Le password non coincidono") }
                 onComplete(false)
                 return@launch
             }
             if (newPassword.isBlank()) {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Password cannot be empty") }
+                _uiState.update { it.copy(isLoading = false, errorMessage = "La password non può essere vuota") }
                 onComplete(false)
                 return@launch
             }
             deletePasswordRepository.setPassword(newPassword)
-            _uiState.update { it.copy(isLoading = false, hasPassword = true, successMessage = "Delete password set") }
+            _uiState.update { it.copy(isLoading = false, hasPassword = true, successMessage = "Password di cancellazione impostata") }
             onComplete(true)
         }
     }
@@ -70,17 +70,17 @@ class DeletePasswordSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null, successMessage = null) }
             if (!_uiState.value.hasPassword || !deletePasswordRepository.verifyPassword(oldPassword)) {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Invalid old password") }
+                _uiState.update { it.copy(isLoading = false, errorMessage = "La password attuale non è corretta") }
                 onComplete(false)
                 return@launch
             }
             if (newPassword != confirmPassword) {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "New passwords do not match") }
+                _uiState.update { it.copy(isLoading = false, errorMessage = "Le nuove password non coincidono") }
                 onComplete(false)
                 return@launch
             }
             deletePasswordRepository.setPassword(newPassword)
-            _uiState.update { it.copy(isLoading = false, successMessage = "Password changed") }
+            _uiState.update { it.copy(isLoading = false, successMessage = "Password cambiata") }
             onComplete(true)
         }
     }
@@ -90,9 +90,9 @@ class DeletePasswordSettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, errorMessage = null, successMessage = null) }
             val success = deletePasswordRepository.removePassword(oldPassword)
             if (success) {
-                _uiState.update { it.copy(isLoading = false, hasPassword = false, successMessage = "Delete password removed") }
+                _uiState.update { it.copy(isLoading = false, hasPassword = false, successMessage = "Password di cancellazione rimossa") }
             } else {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Invalid password") }
+                _uiState.update { it.copy(isLoading = false, errorMessage = "Password errata") }
             }
             onComplete(success)
         }

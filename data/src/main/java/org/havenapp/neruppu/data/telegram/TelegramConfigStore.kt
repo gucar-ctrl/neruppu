@@ -75,6 +75,62 @@ class TelegramConfigStore @Inject constructor(
         Log.d("TelegramConfigStore", "Telegram config cleared, target reset to NONE")
     }
 
+    /** People invited with /invita: they receive the alerts, never the commands. Pairs of (chat id, name). */
+    val extraRecipients: List<Pair<String, String>>
+        get() = (prefs.getString(KEY_EXTRA_RECIPIENTS, "") ?: "")
+            .lines()
+            .mapNotNull { line ->
+                val id = line.substringBefore('|').trim()
+                if (id.isEmpty()) null else id to line.substringAfter('|', "").trim()
+            }
+
+    /** Every chat that gets the alerts: the owner first, then the invited people. */
+    fun alertChatIds(): List<String> =
+        (listOf(chatId.trim()) + extraRecipients.map { it.first })
+            .filter { it.isNotBlank() }
+            .distinct()
+
+    fun addRecipient(id: String, name: String) {
+        val clean = name.replace('|', ' ').replace('\n', ' ').trim().take(64).ifBlank { "Senza nome" }
+        saveRecipients(extraRecipients.filterNot { it.first == id } + (id to clean))
+    }
+
+    /** Removes an invited person and returns their name, or null if [id] was not in the list. */
+    fun removeRecipient(id: String): String? {
+        val list = extraRecipients
+        val found = list.firstOrNull { it.first == id } ?: return null
+        saveRecipients(list.filterNot { it.first == id })
+        return found.second
+    }
+
+    private fun saveRecipients(list: List<Pair<String, String>>) {
+        prefs.edit()
+            .putString(KEY_EXTRA_RECIPIENTS, list.joinToString("\n") { "${it.first}|${it.second}" })
+            .apply()
+    }
+
+    /** Creates a new invite code, valid once and for 24 hours. A new code replaces the previous one. */
+    fun newInviteCode(): String {
+        val random = java.security.SecureRandom()
+        val code = (1..20).map { INVITE_ALPHABET[random.nextInt(INVITE_ALPHABET.length)] }.joinToString("")
+        prefs.edit()
+            .putString(KEY_INVITE_CODE, code)
+            .putLong(KEY_INVITE_EXPIRES, System.currentTimeMillis() + INVITE_TTL_MS)
+            .apply()
+        return code
+    }
+
+    /** True for a valid, unexpired invite code; the code is then cancelled so it works only once. */
+    fun consumeInviteCode(code: String): Boolean {
+        val saved = prefs.getString(KEY_INVITE_CODE, "") ?: ""
+        val expires = prefs.getLong(KEY_INVITE_EXPIRES, 0L)
+        if (saved.isEmpty() || System.currentTimeMillis() > expires) return false
+        val matches = java.security.MessageDigest.isEqual(saved.toByteArray(), code.trim().toByteArray())
+        if (!matches) return false
+        prefs.edit().remove(KEY_INVITE_CODE).remove(KEY_INVITE_EXPIRES).apply()
+        return true
+    }
+
     fun setAsActiveTarget() {
         alertTargetRepository.setActiveTarget(org.havenapp.neruppu.domain.model.AlertTarget.TELEGRAM)
     }
@@ -82,6 +138,11 @@ class TelegramConfigStore @Inject constructor(
     companion object {
         private const val KEY_BOT_TOKEN = "bot_token"
         private const val KEY_CHAT_ID = "chat_id"
+        private const val KEY_EXTRA_RECIPIENTS = "extra_recipients"
+        private const val KEY_INVITE_CODE = "invite_code"
+        private const val KEY_INVITE_EXPIRES = "invite_expires"
+        private const val INVITE_TTL_MS = 24L * 60 * 60 * 1000
+        private const val INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         private val TOKEN_REGEX = Regex("""\d{5,}:[A-Za-z0-9_-]{30,}""")
     }
 }

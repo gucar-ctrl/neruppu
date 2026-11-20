@@ -84,8 +84,8 @@ fun IntegrationConfigPopup(
         title = {
             Text(
                 text = when (integrationType) {
-                    IntegrationType.TELEGRAM -> "Telegram Alerts"
-                    IntegrationType.MATRIX -> "Matrix Alerts"
+                    IntegrationType.TELEGRAM -> "Avvisi Telegram"
+                    IntegrationType.MATRIX -> "Avvisi Matrix"
                 },
                 style = MaterialTheme.typography.headlineSmall,
                 color = TextPrimary
@@ -108,7 +108,7 @@ fun IntegrationConfigPopup(
                         trailingIcon = if (field.isPassword) {
                             {
                                 TextButton(onClick = { revealed = !revealed }) {
-                                    Text(if (revealed) "Hide" else "Show", color = NeruppuOrange)
+                                    Text(if (revealed) "Nascondi" else "Mostra", color = NeruppuOrange)
                                 }
                             }
                         } else null,
@@ -136,7 +136,7 @@ fun IntegrationConfigPopup(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = NeruppuOrange)
                     ) {
-                        Text("Save Config", fontWeight = FontWeight.SemiBold)
+                        Text("Salva", fontWeight = FontWeight.SemiBold)
                     }
 
                     OutlinedButton(
@@ -154,7 +154,7 @@ fun IntegrationConfigPopup(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Text("Test", fontWeight = FontWeight.SemiBold)
+                            Text("Prova", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -174,7 +174,7 @@ fun IntegrationConfigPopup(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Text("Send Mock Message", fontWeight = FontWeight.SemiBold)
+                            Text("Invia un messaggio di prova", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -198,7 +198,7 @@ fun IntegrationConfigPopup(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (status.success) "Connection successful" else status.error ?: "Connection failed",
+                            text = if (status.success) "Connessione riuscita" else status.error ?: "Connessione non riuscita",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (status.success) NeruppuGreen else NeruppuRed,
                             fontWeight = FontWeight.Medium
@@ -218,7 +218,7 @@ fun IntegrationConfigPopup(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = TextSecondary)
+                Text("Chiudi", color = TextSecondary)
             }
         },
         containerColor = Color.White,

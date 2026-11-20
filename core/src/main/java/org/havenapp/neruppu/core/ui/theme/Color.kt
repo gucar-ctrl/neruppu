@@ -19,41 +19,44 @@ package org.havenapp.neruppu.core.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Primary: Fire/Emergency Orange-Red
-val FireOrange80 = Color(0xFFFFB4A1)
-val FireOrange40 = Color(0xFFA6391F)
+// Faro: notte, ambra e avorio. La schermata Stato ha lo sfondo nero e usa questi colori.
+val FaroNight = Color(0xFF0A1020)
+val FaroAmber = Color(0xFFFFB84A)
+val FaroIvory = Color(0xFFFFF1D6)
+val FaroGreen = Color(0xFF5EDBA7)
 
-// Secondary: Security/Deep Blue
-val SecurityBlue80 = Color(0xFFA1CDFF)
-val SecurityBlue40 = Color(0xFF1F5EA6)
+// Schema Material (NeruppuTheme): ambra chiara sul tema scuro, ambra scura sul chiaro
+val FireOrange80 = Color(0xFFFFB84A)
+val FireOrange40 = Color(0xFF8F5300)
+val SecurityBlue80 = Color(0xFF8EC1FF)
+val SecurityBlue40 = Color(0xFF1F5FBF)
+val NightGrey80 = Color(0xFFAEBBD3)
+val NightGrey40 = Color(0xFF44526E)
 
-// Tertiary: Night/Stealth Grey
-val NightGrey80 = Color(0xFFC7C5D0)
-val NightGrey40 = Color(0xFF5E5E66)
-
-// Prototype Colors
-val NeruppuOrange = Color(0xFFE8520A)
-val NeruppuOrangeSoft = Color(0xFFFFF0E8)
-val NeruppuOrangeBorder = Color(0xFFF5A07A)
-val NeruppuGreen = Color(0xFF1D9E75)
-val NeruppuGreenSoft = Color(0xFFE1F5EE)
-val NeruppuRed = Color(0xFFE24B4A)
-val NeruppuRedSoft = Color(0xFFFCEBEB)
-val NeruppuAmber = Color(0xFFBA7517)
-val NeruppuAmberSoft = Color(0xFFFAEEDA)
-val NeruppuBlue = Color(0xFF185FA5)
-val NeruppuBlueSoft = Color(0xFFE6F1FB)
+// Colori delle schermate chiare (Faro, tema chiaro). Testo e accenti almeno 4,5:1 su bianco e su #F4F6FB.
+val NeruppuOrange = Color(0xFF8F5300)
+val NeruppuOrangeSoft = Color(0xFFFBEFD9)
+val NeruppuOrangeBorder = Color(0xFFE0B266)
+val NeruppuGreen = Color(0xFF0F7B55)
+val NeruppuGreenSoft = Color(0xFFE3F4EC)
+val NeruppuRed = Color(0xFFBA1A1A)
+val NeruppuRedSoft = Color(0xFFFDECEC)
+val NeruppuAmber = Color(0xFFAD6404)
+val NeruppuAmberSoft = Color(0xFFFBEFD9)
+val NeruppuBlue = Color(0xFF1F5FBF)
+val NeruppuBlueSoft = Color(0xFFE6EEFA)
 
 val BackgroundPrimary = Color(0xFFFFFFFF)
-val BackgroundSecondary = Color(0xFFF7F7F7)
-val BorderTertiary = Color(0xFFEEEEEE)
-val TextPrimary = Color(0xFF111111)
-val TextSecondary = Color(0xFF777777)
-val TextTertiary = Color(0xFFAAAAAA)
-val IdleBorder = Color(0xFF444444)
-val IdleIcon = Color(0xFF555555)
+val BackgroundSecondary = Color(0xFFF4F6FB)
+val BorderTertiary = Color(0xFFE3E8F1)
+val TextPrimary = Color(0xFF0A1020)
+val TextSecondary = Color(0xFF44526E)
+// Testo secondario sullo sfondo nero della schermata Stato
+val TextTertiary = Color(0xFFAEBBD3)
+val IdleBorder = Color(0xFF5E7298)
+val IdleIcon = Color(0xFF7F8FB0)
 
-val ChartBackground = Color(0xFF222222)
-val ChartYellow = Color(0xFFFFD700)
-val ChartBlue = Color(0xFF00BFFF)
-val ChartGreen = Color(0xFF32CD32)
+val ChartBackground = Color(0xFF0A1020)
+val ChartYellow = Color(0xFFFFB84A)
+val ChartBlue = Color(0xFF8EC1FF)
+val ChartGreen = Color(0xFF5EDBA7)

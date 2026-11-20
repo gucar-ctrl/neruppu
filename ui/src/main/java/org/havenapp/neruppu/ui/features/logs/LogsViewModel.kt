@@ -62,7 +62,7 @@ class LogsViewModel @Inject constructor(
                 LogsDeleteUiState(
                     showPasswordDialog = false,
                     deleteMessage = LogsDeleteMessage.Error(
-                        "Set a delete password in Settings before clearing events."
+                        "Imposta una password di cancellazione nelle Opzioni prima di cancellare gli eventi."
                     )
                 )
             }
@@ -87,10 +87,10 @@ class LogsViewModel @Inject constructor(
                 deleteMessage = when (result) {
                     ClearEventsResult.Success -> LogsDeleteMessage.Success
                     ClearEventsResult.MissingPassword -> LogsDeleteMessage.Error(
-                        "Set a delete password in Settings before clearing events."
+                        "Imposta una password di cancellazione nelle Opzioni prima di cancellare gli eventi."
                     )
                     ClearEventsResult.InvalidPassword -> LogsDeleteMessage.Error(
-                        "Password is incorrect."
+                        "Password errata."
                     )
                     is ClearEventsResult.Error -> LogsDeleteMessage.Error(result.message)
                 }

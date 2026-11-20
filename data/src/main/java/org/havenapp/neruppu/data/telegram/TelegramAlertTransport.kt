@@ -54,7 +54,7 @@ class TelegramAlertTransport @Inject constructor(
 
             when (payload) {
                 is AlertPayload.TextAlert -> {
-                    apiClient.sendMessage(textMsg).getOrThrow()
+                    apiClient.broadcast { apiClient.sendMessage(textMsg, it) }.getOrThrow()
                 }
 
                 is AlertPayload.MediaAlert -> {
@@ -65,9 +65,9 @@ class TelegramAlertTransport @Inject constructor(
                         val uploadBytes = if (bytes.size > 5_000_000) {
                             compressJpeg(bytes, targetKb = 4000)
                         } else bytes
-                        apiClient.sendPhoto(uploadBytes, textMsg).getOrThrow()
+                        apiClient.broadcast { apiClient.sendPhoto(uploadBytes, textMsg, it) }.getOrThrow()
                     } else {
-                        apiClient.sendVoice(bytes, textMsg).getOrThrow()
+                        apiClient.broadcast { apiClient.sendVoice(bytes, textMsg, it) }.getOrThrow()
                     }
                 }
             }
