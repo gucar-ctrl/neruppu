@@ -33,8 +33,10 @@ import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -203,7 +205,17 @@ class CameraManager(private val context: Context) {
             }
         } ?: return null
 
-        delay(durationMs)
+        try {
+            delay(durationMs)
+        } catch (e: CancellationException) {
+            // Cancelled (alarm switched off): stop the recorder and throw the clip away.
+            withContext(NonCancellable + Dispatchers.Main) { recording.stop() }
+            withContext(NonCancellable) {
+                withTimeoutOrNull(5_000) { finalized.await() }
+                file.delete()
+            }
+            throw e
+        }
         withContext(Dispatchers.Main) { recording.stop() }
         val ok = withTimeoutOrNull(15_000) { finalized.await() } ?: false
         return if (ok) file else { file.delete(); null }
