@@ -111,6 +111,8 @@ class CameraManager(private val context: Context) {
             }
         }
 
+    private var boundCamera: androidx.camera.core.Camera? = null
+    private var torchEnabled = false
     private var boundCameraInfo: androidx.camera.core.CameraInfo? = null
     private var motionAnalyzer: MotionAnalyzer? = null
      
@@ -319,11 +321,13 @@ class CameraManager(private val context: Context) {
 
                 try {
                     val all = if (videoCapture != null) useCases + videoCapture!! else useCases
-                    boundCameraInfo = cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,
                         *all.toTypedArray()
-                    ).cameraInfo
+                    )
+                    boundCamera = camera
+                    boundCameraInfo = camera.cameraInfo
                 } catch (e: Exception) {
                     if (videoCapture == null) throw e
                     // Device can't run photo + analysis + video together: fall back to photos only.
@@ -331,17 +335,20 @@ class CameraManager(private val context: Context) {
                     videoSupported = false
                     videoCapture = null
                     cameraProvider.unbindAll()
-                    boundCameraInfo = cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,
                         *useCases.toTypedArray()
-                    ).cameraInfo
+                    )
+                    boundCamera = camera
+                    boundCameraInfo = camera.cameraInfo
                 }
                 currentVideoEnabled = enableVideo
                 currentPhotoResolution = photoResolution
                 currentVideoQuality = videoQuality
                 
                 isBound = true
+                torchEnabled = false
                 currentCameraSide = useFrontCamera
                 currentLifecycleOwner = lifecycleOwner
                 Log.d("CameraManager", "CAMERA SYSTEM INITIALIZED BY SERVICE: Bound to $lifecycleOwner")
@@ -353,9 +360,34 @@ class CameraManager(private val context: Context) {
     }
 
 
+    /** True while the torch is on, as far as this manager knows. */
+    val isTorchOn: Boolean get() = torchEnabled
+
+    /** True when the bound camera has a flash unit that can work as a torch. */
+    fun hasTorch(): Boolean = boundCamera?.cameraInfo?.hasFlashUnit() == true
+
+    /** Switches the torch of the bound camera. Returns false when no camera is bound. */
+    fun setTorch(on: Boolean): Boolean {
+        val camera = boundCamera ?: return false
+        torchEnabled = on
+        val request = camera.cameraControl.enableTorch(on)
+        request.addListener({
+            try {
+                request.get()
+            } catch (e: Exception) {
+                // The torch did not switch: bring the flag back in line with the hardware.
+                Log.w("CameraManager", "Torch request failed", e)
+                if (boundCamera === camera) torchEnabled = !on
+            }
+        }, ContextCompat.getMainExecutor(context))
+        return true
+    }
+
     fun unbind() {
         getCameraProvider { cameraProvider ->
             cameraProvider.unbindAll()
+            boundCamera = null
+            torchEnabled = false
             isBound = false
             currentCameraSide = null
             currentLifecycleOwner = null

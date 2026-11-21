@@ -165,6 +165,12 @@ class MonitoringService : LifecycleService() {
                     withContext(Dispatchers.Main) { updateRemoteControl() }
                 }
                 "alert_pause_s" -> updatePrefValues()
+                "auto_torch" -> {
+                    updatePrefValues()
+                    if (!autoTorchPref && cameraManager.isTorchOn) {
+                        withContext(Dispatchers.Main) { applyTorch(false, System.currentTimeMillis()) }
+                    }
+                }
                 "audio_threshold", "save_photos" -> {
                     Log.d("MonitoringService", "Prefs changed ($key), updating values...")
                     updatePrefValues()
@@ -183,6 +189,9 @@ class MonitoringService : LifecycleService() {
     private var photoResolutionPref = "fhd"
     private var videoQualityPref = "fhd"
     private var alertPausePref = 30
+    private var autoTorchPref = true
+    private var lastTorchChangeMs = 0L
+    private var lastLuxReading: Float? = null
 
     private fun updatePrefValues() {
         val prefs = getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
@@ -195,6 +204,7 @@ class MonitoringService : LifecycleService() {
         sensitivityPref = prefs.getFloat("motion_sensitivity", 15f)
         useFrontCameraPref = prefs.getBoolean("use_front_camera", false)
         audioThresholdPref = prefs.getFloat("audio_threshold", 200f)
+        autoTorchPref = prefs.getBoolean("auto_torch", true)
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -489,7 +499,34 @@ class MonitoringService : LifecycleService() {
         startMonitoringIfNeeded()
     }
 
+    /**
+     * Turns the torch on when the room gets dark and off again once it is bright enough.
+     * Two thresholds and a minimum time per state keep it from flickering.
+     */
+    private fun updateAutoTorch(lux: Float) {
+        val now = System.currentTimeMillis()
+        val torchOn = cameraManager.isTorchOn
+        if (!autoTorchPref || !cameraManager.hasTorch()) {
+            if (torchOn) applyTorch(false, now)
+            return
+        }
+        if (now - lastTorchChangeMs < TORCH_MIN_STATE_MS) return
+        if (!torchOn && lux < TORCH_ON_LUX) {
+            applyTorch(true, now)
+        } else if (torchOn && lux > TORCH_OFF_LUX) {
+            applyTorch(false, now)
+        }
+    }
+
+    private fun applyTorch(on: Boolean, now: Long) {
+        Log.i("MonitoringService", "Torch ${if (on) "on" else "off"} (automatic, low light)")
+        cameraManager.setTorch(on)
+        lastTorchChangeMs = now
+    }
+
     private fun stopMonitoring() {
+        // The torch belongs to the guard: it goes off when monitoring stops.
+        if (cameraManager.isTorchOn) applyTorch(false, System.currentTimeMillis())
         Log.d("MonitoringService", "stopMonitoring() called - Monitoring: ${_isMonitoring.value}, UI: ${_uiActive.value}")
         
         // ONLY unbind camera if NO ONE needs it (not monitoring AND UI is not visible)
@@ -567,8 +604,12 @@ class MonitoringService : LifecycleService() {
                     .buffer()
                     .onEach { lux ->
                         _lightLevel.value = lux
+                        lastLuxReading = lux
                         Log.v("MonitoringService", "Light event received")
-                        if (_isMonitoring.value) {
+                        // Light changes caused by the torch itself are not security events.
+                        val torchCausedChange = System.currentTimeMillis() - lastTorchChangeMs < TORCH_ALERT_GRACE_MS
+                        updateAutoTorch(lux)
+                        if (_isMonitoring.value && !torchCausedChange) {
                             serviceScope.launch {
                                 handleEvent(SensorType.LIGHT, "Cambio di luce rilevato ($lux lux)")
                             }
@@ -577,6 +618,14 @@ class MonitoringService : LifecycleService() {
 
                 launch { accelerometerFlow.collect() }
                 launch { lightFlow.collect() }
+
+                // The camera can bind after the first light reading, so the torch rule is re-checked periodically.
+                launch {
+                    while (isActive) {
+                        delay(TORCH_RECHECK_MS)
+                        lastLuxReading?.let { updateAutoTorch(it) }
+                    }
+                }
                 
                 // Significant Motion Monitoring (Ultra-low power wakeups)
                 launch {
@@ -1370,6 +1419,15 @@ class MonitoringService : LifecycleService() {
         const val DISCARDED_REASON = "Annullato"
         const val ALERT_MAX_HOLD_MS = 150_000L
         const val CAPTURE_TIMEOUT_MS = 15_000L
+        /** The torch switches on below TORCH_ON_LUX lux and off above TORCH_OFF_LUX lux. */
+        const val TORCH_ON_LUX = 10f
+        const val TORCH_OFF_LUX = 40f
+        /** A torch state lasts at least this long before it may change again. */
+        const val TORCH_MIN_STATE_MS = 30_000L
+        /** Light changes this soon after a torch switch are not raised as alerts. */
+        const val TORCH_ALERT_GRACE_MS = 10_000L
+        /** How often the torch rule is re-checked while monitoring. */
+        const val TORCH_RECHECK_MS = 10_000L
         const val LIVE_INTERVAL_MS = 5_000L
         const val LIVE_DEFAULT_MINUTES = 2
         const val LIVE_MAX_MINUTES = 10

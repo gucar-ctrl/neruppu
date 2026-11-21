@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.LockReset
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Mic
@@ -148,6 +149,10 @@ fun SettingsScreen(
         deletePasswordViewModel.clearMessages()
     }
 
+    val context = LocalContext.current
+    val torchPrefs = remember { context.getSharedPreferences("neruppu_prefs", android.content.Context.MODE_PRIVATE) }
+    var autoTorch by remember { mutableStateOf(torchPrefs.getBoolean("auto_torch", true)) }
+
     val telegramFields = listOf(
         IntegrationField(
             label = "Token del bot",
@@ -226,6 +231,16 @@ fun SettingsScreen(
                         subLabel = "Sensore di luce ambientale",
                         checked = lightEnabled,
                         onCheckedChange = onLightToggle
+                    )
+                    SettingRow(
+                        icon = Icons.Default.FlashOn,
+                        label = "Torcia automatica",
+                        subLabel = "Accende il LED quando c'è poca luce",
+                        checked = autoTorch,
+                        onCheckedChange = {
+                            autoTorch = it
+                            torchPrefs.edit().putBoolean("auto_torch", it).apply()
+                        }
                     )
                 }
 
