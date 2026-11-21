@@ -52,6 +52,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 class CameraManager(private val context: Context) {
@@ -145,6 +146,10 @@ class CameraManager(private val context: Context) {
             return null
         }
         
+        // Focus first: a blurred shot is the most common reason a photo is useless.
+        val camera = boundCamera
+        if (camera != null) lockFocusOnCentre(camera, capture)
+
         return suspendCancellableCoroutine { continuation ->
             val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
                 .format(System.currentTimeMillis())
@@ -160,15 +165,50 @@ class CameraManager(private val context: Context) {
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         Log.i("CameraManager", "PHOTO SAVED: ${file.absolutePath}")
+                        camera?.cameraControl?.cancelFocusAndMetering()
                         if (continuation.isActive) continuation.resume(Uri.fromFile(file))
                     }
 
                     override fun onError(exception: ImageCaptureException) {
                         Log.e("CameraManager", "CAPTURE FAILED: ${exception.message}", exception)
+                        camera?.cameraControl?.cancelFocusAndMetering()
                         if (continuation.isActive) continuation.resume(null)
                     }
                 }
             )
+        }
+    }
+
+    /**
+     * Locks focus and exposure on the centre of the frame and waits briefly for the camera to confirm focus.
+     * Returns true only when focus was confirmed in time. The caller takes the shot either way.
+     */
+    private suspend fun lockFocusOnCentre(camera: androidx.camera.core.Camera, capture: ImageCapture): Boolean {
+        return try {
+            val size = capture.resolutionInfo?.resolution
+            val points = SurfaceOrientedMeteringPointFactory(
+                size?.width?.toFloat() ?: 1f,
+                size?.height?.toFloat() ?: 1f
+            )
+            val action = FocusMeteringAction.Builder(points.createPoint(0.5f, 0.5f))
+                .setAutoCancelDuration(FOCUS_AUTO_CANCEL_SECONDS, TimeUnit.SECONDS)
+                .build()
+            val future = withContext(Dispatchers.Main) { camera.cameraControl.startFocusAndMetering(action) }
+            val result = withTimeoutOrNull(FOCUS_WAIT_MS) {
+                suspendCancellableCoroutine<FocusMeteringResult?> { continuation ->
+                    future.addListener({
+                        if (continuation.isActive) continuation.resume(runCatching { future.get() }.getOrNull())
+                    }, ContextCompat.getMainExecutor(context))
+                }
+            }
+            val focused = result?.isFocusSuccessful == true
+            Log.d("CameraManager", if (focused) "Focus locked on centre" else "Focus not confirmed in time, shooting anyway")
+            focused
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("CameraManager", "Focus lock failed, shooting anyway", e)
+            false
         }
     }
 
@@ -275,7 +315,7 @@ class CameraManager(private val context: Context) {
                     .build()
 
                 imageCapture = ImageCapture.Builder()
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                     .setResolutionSelector(resolutionSelector)
                     .build()
                 useCases.add(imageCapture!!)
@@ -403,6 +443,14 @@ class CameraManager(private val context: Context) {
             cameraExecutor.shutdown()
             Log.d("CameraManager", "Camera system released")
         }
+    }
+
+    private companion object {
+        /** How long a shot waits for the focus lock before it is taken anyway. */
+        const val FOCUS_WAIT_MS = 2_000L
+
+        /** The focus lock releases by itself after this long if nothing cancels it first. */
+        const val FOCUS_AUTO_CANCEL_SECONDS = 5L
     }
 
     fun release() {

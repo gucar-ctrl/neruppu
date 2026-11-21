@@ -49,6 +49,8 @@ import kotlinx.coroutines.sync.withLock
 import org.havenapp.neruppu.R
 import org.havenapp.neruppu.data.audio.AudioRecorder
 import org.havenapp.neruppu.data.camera.CameraManager
+import org.havenapp.neruppu.data.camera.JpegSharpness
+import org.havenapp.neruppu.data.storage.LocalMediaJanitor
 import org.havenapp.neruppu.data.telegram.TelegramApiClient
 import org.havenapp.neruppu.data.telegram.TelegramConfigStore
 import org.havenapp.neruppu.data.worker.MediaUploadWorker
@@ -103,6 +105,9 @@ class MonitoringService : LifecycleService() {
 
     @Inject
     lateinit var telegramConfigStore: TelegramConfigStore
+
+    @Inject
+    lateinit var localMediaJanitor: LocalMediaJanitor
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var wakeLockRefreshJob: Job? = null
@@ -190,6 +195,7 @@ class MonitoringService : LifecycleService() {
     private var videoQualityPref = "fhd"
     private var alertPausePref = 30
     private var autoTorchPref = true
+    @Volatile
     private var lastTorchChangeMs = 0L
     private var lastLuxReading: Float? = null
 
@@ -330,6 +336,8 @@ class MonitoringService : LifecycleService() {
         lightSensorDriver = LightSensorDriver(this)
         significantMotionDriver = SignificantMotionDriver(this)
         audioRecorder = AudioRecorder(this)
+        // Removes leftovers from older versions and keeps the local media folders within the cap.
+        serviceScope.launch { localMediaJanitor.enforce(force = true) }
         
         updatePrefValues()
         val prefs = getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
@@ -560,7 +568,9 @@ class MonitoringService : LifecycleService() {
                 sensitivity = (sensitivityPref * 30).toInt().coerceIn(5, 30),
                 onMotionDetected = { level ->
                     _motionLevel.value = level
-                    if (_isMonitoring.value && level > 15.0) {
+                    // Switching the torch changes the whole picture: that is not movement.
+                    val torchSettling = System.currentTimeMillis() - lastTorchChangeMs < TORCH_ALERT_GRACE_MS
+                    if (_isMonitoring.value && level > 15.0 && !torchSettling) {
                         Log.v("MonitoringService", "THRESHOLD EXCEEDED: $level")
                         serviceScope.launch {
                             handleEvent(SensorType.CAMERA_MOTION, "Movimento rilevato dalla fotocamera (livello ${String.format("%.2f", level)})")
@@ -798,7 +808,7 @@ class MonitoringService : LifecycleService() {
                     Log.d("MonitoringService", "Attempting to capture photo for event...")
                     val uri = withTimeoutOrNull(CAPTURE_TIMEOUT_MS) { cameraManager.capturePhoto() }
                     withContext(Dispatchers.IO) {
-                        uri?.let { contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() } }
+                        uri?.let { readAndDeleteFile(it) }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -906,11 +916,15 @@ class MonitoringService : LifecycleService() {
     }
 
     private suspend fun sendPhotoBurst(label: String) {
-        val photos = mutableListOf<ByteArray>()
+        val captured = mutableListOf<ByteArray>()
         repeat(BURST_EXTRA_PHOTOS) {
             delay(CLIP_DURATION_MS / BURST_EXTRA_PHOTOS)
-            readAndDeleteCapture()?.let { photos.add(it) }
+            readAndDeleteCapture()?.let { captured.add(it) }
         }
+        // Sharpest frame first: Telegram shows the first photo of an album as its cover.
+        val scored = captured.map { it to JpegSharpness.score(it) }.sortedByDescending { it.second }
+        Log.d("MonitoringService", "Burst sharpness, best first: ${scored.joinToString { String.format(Locale.US, "%.1f", it.second) }}")
+        val photos = scored.map { it.first }
         when {
             photos.size >= 2 -> telegramApiClient.broadcast {
                 telegramApiClient.sendMediaGroup(photos, "\uD83D\uDCF8 Sequenza di 10 s dopo il rilevamento ($label)", it)
@@ -920,6 +934,13 @@ class MonitoringService : LifecycleService() {
             }
             else -> Result.success(Unit)
         }.onFailure { Log.e("MonitoringService", "Photo burst send failed", it) }
+    }
+
+    /** Reads a capture from CameraManager and deletes the temporary file, so captures/ does not grow. */
+    private fun readAndDeleteFile(uri: android.net.Uri): ByteArray? = try {
+        contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    } finally {
+        uri.path?.let { File(it).delete() }
     }
 
     private suspend fun readAndDeleteCapture(live: Boolean = false): ByteArray? = try {

@@ -31,14 +31,15 @@ import javax.inject.Singleton
 
 @Singleton
 class MediaStorageRepositoryImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val localMediaJanitor: LocalMediaJanitor
 ) : MediaStorageRepository {
 
     override suspend fun saveImage(
         jpegBytes: ByteArray,
         timestamp: Long
     ): Result<MediaFile> = runCatching {
-        withContext(Dispatchers.IO) {
+        val mediaFile = withContext(Dispatchers.IO) {
             val fileName = "neruppu_motion_${timestamp}.jpg"
             val capturesDir = File(context.filesDir, "captures").apply { mkdirs() }
             val file = File(capturesDir, fileName)
@@ -51,13 +52,15 @@ class MediaStorageRepositoryImpl @Inject constructor(
                 timestamp = timestamp
             )
         }
+        localMediaJanitor.enforce()
+        mediaFile
     }
 
     override suspend fun saveAudio(
         audioFile: File,
         timestamp: Long
     ): Result<MediaFile> = runCatching {
-        withContext(Dispatchers.IO) {
+        val mediaFile = withContext(Dispatchers.IO) {
             val fileName = "neruppu_sound_${timestamp}.mp4"
             val capturesDir = File(context.filesDir, "captures").apply { mkdirs() }
             val file = File(capturesDir, fileName)
@@ -70,6 +73,8 @@ class MediaStorageRepositoryImpl @Inject constructor(
                 timestamp = timestamp
             )
         }
+        localMediaJanitor.enforce()
+        mediaFile
     }
 
     override fun getNeruppuFolder(): File {

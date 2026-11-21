@@ -60,6 +60,16 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE uploadStatusValue IN (1, 3) AND (failureReason IS NULL OR failureReason != 'Annullato') ORDER BY timestamp ASC LIMIT :limit")
     suspend fun getPendingUploadEvents(limit: Int): List<EventEntity>
 
+    // Local photo and audio paths of events still waiting for upload. The media janitor keeps these files.
+    @Query("""
+        SELECT mediaUri FROM events
+        WHERE uploadStatusValue IN (1, 3) AND (failureReason IS NULL OR failureReason != 'Annullato') AND mediaUri IS NOT NULL
+        UNION
+        SELECT audioUri FROM events
+        WHERE uploadStatusValue IN (1, 3) AND (failureReason IS NULL OR failureReason != 'Annullato') AND audioUri IS NOT NULL
+    """)
+    suspend fun getWaitingMediaPaths(): List<String>
+
     @Query("SELECT * FROM events ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastEventEntity(): EventEntity?
 
